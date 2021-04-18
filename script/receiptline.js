@@ -57,7 +57,9 @@ limitations under the License.
             upsideDown: !!printer.upsideDown,
             spacing: !!printer.spacing,
             cutting: 'cutting' in printer ? !!printer.cutting : true,
+            gradient: 'gradient' in printer ? !!printer.gradient : true,
             gamma: printer.gamma || 1.8,
+            threshold: printer.threshold || 128,
             command: commands[printer.command] || commands.svg
         };
         // append commands to start printing
@@ -523,7 +525,7 @@ limitations under the License.
         if ('image' in column) {
             // append commands to print image
             result.push(printer.command.normal() +
-                printer.command.image(column.image, printer.gamma, column.align, left, width, right));
+                printer.command.image(column.image, column.align, left, width, right));
         }
         // process barcode or 2D code
         if ('code' in column) {
@@ -858,14 +860,13 @@ limitations under the License.
          * Function - image
          * Print image
          * @param {string} image image data (base64 png format)
-         * @param {number} gamma gamma correction
          * @param {number} align line alignment (0: left, 1: center, 2: right)
          * @param {number} left left margin (unit: characters)
          * @param {number} width print area (unit: characters)
          * @param {number} right right margin (unit: characters)
          * @returns {string} commands
          */
-        image: (image, gamma, align, left, width, right) => '',
+        image: (image, align, left, width, right) => '',
     
         /**
          * Function - qrcode
@@ -932,7 +933,7 @@ limitations under the License.
             return `<svg width="${this.svgWidth}px" height="${this.svgHeight}px" viewBox="0 0 ${this.svgWidth} ${this.svgHeight}" preserveAspectRatio="xMinYMin meet" ` +
                 `xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1"><style type="text/css"><![CDATA[${this.stylesheet}]]></style>` +
                 `<defs><filter id="receiptlineinvert" x="0" y="0" width="100%" height="100%"><feFlood flood-color="#000"/><feComposite in="SourceGraphic" operator="xor"/></filter></defs>` +
-                `<g font-family="${this.fontFamily}" fill="#000" font-size="${this.fontSize}" dominant-baseline="text-after-edge">${this.svgContent}</g></svg>\n`;
+                `<g font-family="${this.fontFamily}" fill="#000" font-size="${this.fontSize}" dominant-baseline="text-after-edge" text-anchor="middle">${this.svgContent}</g></svg>\n`;
         },
         // set print area:
         area: function (left, width, right) {
@@ -1030,8 +1031,9 @@ limitations under the License.
         text: function (text, encoding) {
             let p = this.textPosition;
             this.textAttributes.x = text.split('').map(c => {
-                const r = p * this.charWidth / this.textScale;
-                p += this.measureText(c, encoding) * this.textScale;
+                const q = this.measureText(c, encoding) * this.textScale;
+                const r = (p + q / 2) * this.charWidth / this.textScale;
+                p += q;
                 return r;
             }).join();
             const attr = Object.keys(this.textAttributes).reduce((a, key) => a + ` ${key}="${this.textAttributes[key]}"`, '');
@@ -1054,7 +1056,7 @@ limitations under the License.
         // insert commands:
         command: command => '',
         // print image:
-        image: function (image, gamma, align, left, width, right) {
+        image: function (image, align, left, width, right) {
             const png = typeof window !== 'undefined' ? window.atob(image) : Buffer.from(image, 'base64').toString('binary');
             let imgWidth = 0;
             let imgHeight = 0;
@@ -1454,11 +1456,17 @@ limitations under the License.
         upsideDown: false,
         spacing: false,
         cutting: true,
+        gradient: true,
+        gamma: 1.8,
+        threshold: 128,
         // start printing: ESC @ GS a n ESC M n FS ( A pL pH fn m ESC SP n FS S n1 n2 (ESC 2) (ESC 3 n) ESC { n
         open: function (printer) {
             this.upsideDown = printer.upsideDown;
             this.spacing = printer.spacing;
             this.cutting = printer.cutting;
+            this.gradient = printer.gradient;
+            this.gamma = printer.gamma;
+            this.threshold = printer.threshold;
             return '\x1b@\x1da\x00\x1bM0\x1c(A' + $(2, 0, 48, 0) + '\x1b \x00\x1cS\x00\x00' + (this.spacing ? '\x1b2' : '\x1b3\x00') + '\x1b{' + $(this.upsideDown);
         },
         // finish printing: GS r n
@@ -1524,7 +1532,7 @@ limitations under the License.
         // insert commands:
         command: command => command,
         // print image: GS 8 L p1 p2 p3 p4 m fn a bx by c xL xH yL yH d1 ... dk GS ( L pL pH m fn
-        image: function (image, gamma, align, left, width, right) {
+        image: function (image, align, left, width, right) {
             let r = this.upsideDown ? this.area(right, width, left) + this.align(2 - align) : this.area(left, width, right) + this.align(align);
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
@@ -1539,14 +1547,21 @@ limitations under the License.
                     let b = 0;
                     const q = Math.min(w - x, 8);
                     for (let p = 0; p < q; p++) {
-                        const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / gamma) * 255);
+                        const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / this.gamma) * 255);
                         j += this.upsideDown ? -4 : 4;
-                        d[i] = e * 3;
-                        e = f < 128 ? (b |= 128 >> p, f) : f - 255;
-                        if (i > 0) {
-                            d[i - 1] += e;
+                        if (this.gradient) {
+                            d[i] = e * 3;
+                            e = f < this.threshold ? (b |= 128 >> p, f) : f - 255;
+                            if (i > 0) {
+                                d[i - 1] += e;
+                            }
+                            d[i++] += e * 7;
                         }
-                        d[i++] += e * 7;
+                        else {
+                            if (f < this.threshold) {
+                                b |= 128 >> p;
+                            }
+                        }
                     }
                     r += $(b);
                 }
@@ -1711,6 +1726,9 @@ limitations under the License.
             this.upsideDown = printer.upsideDown;
             this.spacing = printer.spacing;
             this.cutting = printer.cutting;
+            this.gradient = printer.gradient;
+            this.gamma = printer.gamma;
+            this.threshold = printer.threshold;
             return '\x1b@\x1da\x00\x1bM0\x1b \x00\x1cS\x00\x00' + (this.spacing ? '\x1b2' : '\x1b3\x00') + '\x1b{' + $(this.upsideDown);
         },
         // finish printing: GS r n
@@ -1875,7 +1893,7 @@ limitations under the License.
     //
     const _fit = {
         // print image: GS 8 L p1 p2 p3 p4 m fn a bx by c xL xH yL yH d1 ... dk GS ( L pL pH m fn
-        image: function (image, gamma, align, left, width, right) {
+        image: function (image, align, left, width, right) {
             let r = (this.upsideDown && align === 2 ? this.area(right, width, left) : this.area(left, width, right)) + this.align(align);
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
@@ -1890,14 +1908,21 @@ limitations under the License.
                     let b = 0;
                     const q = Math.min(w - x, 8);
                     for (let p = 0; p < q; p++) {
-                        const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / gamma) * 255);
+                        const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / this.gamma) * 255);
                         j += 4;
-                        d[i] = e * 3;
-                        e = f < 128 ? (b |= 128 >> p, f) : f - 255;
-                        if (i > 0) {
-                            d[i - 1] += e;
+                        if (this.gradient) {
+                            d[i] = e * 3;
+                            e = f < this.threshold ? (b |= 128 >> p, f) : f - 255;
+                            if (i > 0) {
+                                d[i - 1] += e;
+                            }
+                            d[i++] += e * 7;
                         }
-                        d[i++] += e * 7;
+                        else {
+                            if (f < this.threshold) {
+                                b |= 128 >> p;
+                            }
+                        }
                     }
                     r += $(b);
                 }
@@ -1908,19 +1933,25 @@ limitations under the License.
     };
 
     //
-    // StarPRNT MBCS
+    // StarPRNT Common
     //
-    const _starmbcs = {
+    const _star = {
         // printer configuration
         upsideDown: false,
         spacing: false,
         cutting: true,
+        gradient: true,
+        gamma: 1.8,
+        threshold: 128,
         // start printing: ESC @ ESC RS a n ESC RS F n ESC SP n ESC s n1 n2 (ESC z n) (ESC 0) (SI) (DC2)
         open: function (printer) {
             this.upsideDown = printer.upsideDown;
             this.spacing = printer.spacing;
             this.cutting = printer.cutting;
-            return '\x1b@\x1b\x1ea0\x1b\x1eF\x00\x1b 0\x1bs00' + (this.spacing ? '\x1bz1' : '\x1b0') + (this.upsideDown ? '\x0f' : '\x12');
+            this.gradient = printer.gradient;
+            this.gamma = printer.gamma;
+            this.threshold = printer.threshold;
+            return '\x1b@\x1b\x1ea\x00\x1b\x1eF\x00\x1b 0\x1bs00' + (this.spacing ? '\x1bz1' : '\x1b0') + (this.upsideDown ? '\x0f' : '\x12');
         },
         // finish printing: ESC GS ETX s n1 n2
         close: function () {
@@ -1940,16 +1971,6 @@ limitations under the License.
             const p = position * this.charWidth;
             return '\x1b\x1dR' + $(p & 255, p >> 8 & 255);
         },
-        // print horizontal rule: ESC $ n ...
-        hr: width => '\x1b$0' + '\x95'.repeat(width),
-        // print vertical rules: ESC i n1 n2 ESC $ n ...
-        vr: function (widths, height) {
-            return widths.reduce((a, w) => a + this.relative(w) + '\x96', '\x1bi' + $(height - 1, 0) + '\x1b$0\x96');
-        },
-        // start rules: ESC $ n ...
-        vrstart: (widths, left, right) => '\x1b$0' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', left ? '\x9c' : '\x98').slice(0, -1) + (right ? '\x9d' : '\x99'),
-        // stop rules: ESC $ n ...
-        vrstop: (widths, left, right) => '\x1b$0' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', left ? '\x9e' : '\x9a').slice(0, -1) + (right ? '\x9f' : '\x9b'),
         // set line spacing and feed new line: (ESC z n) (ESC 0)
         vrlf: function (vr) {
             return (this.upsideDown ? this.lf() : '') + (vr === this.upsideDown && this.spacing ? '\x1bz1' : '\x1b0') + (this.upsideDown ? '' : this.lf());
@@ -1981,7 +2002,7 @@ limitations under the License.
         // insert commands:
         command: command => command,
         // print image: ESC GS S m xL xH yL yH n [d11 d12 ... d1k]
-        image: function (image, gamma, align, left, width, right) {
+        image: function (image, align, left, width, right) {
             let r = this.area(left, width, right) + this.align(align);
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
@@ -1996,14 +2017,21 @@ limitations under the License.
                     let b = 0;
                     const q = Math.min(w - x, 8);
                     for (let p = 0; p < q; p++) {
-                        const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / gamma) * 255);
+                        const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / this.gamma) * 255);
                         j += 4;
-                        d[i] = e * 3;
-                        e = f < 128 ? (b |= 128 >> p, f) : f - 255;
-                        if (i > 0) {
-                            d[i - 1] += e;
+                        if (this.gradient) {
+                            d[i] = e * 3;
+                            e = f < this.threshold ? (b |= 128 >> p, f) : f - 255;
+                            if (i > 0) {
+                                d[i - 1] += e;
+                            }
+                            d[i++] += e * 7;
                         }
-                        d[i++] += e * 7;
+                        else {
+                            if (f < this.threshold) {
+                                b |= 128 >> p;
+                            }
+                        }
                     }
                     r += $(b);
                 }
@@ -2067,9 +2095,25 @@ limitations under the License.
     };
 
     //
+    // StarPRNT MBCS
+    //
+    const _mbcs = {
+        // print horizontal rule: ESC $ n ...
+        hr: width => '\x1b$0' + '\x95'.repeat(width),
+        // print vertical rules: ESC i n1 n2 ESC $ n ...
+        vr: function (widths, height) {
+            return widths.reduce((a, w) => a + this.relative(w) + '\x96', '\x1bi' + $(height - 1, 0) + '\x1b$0\x96');
+        },
+        // start rules: ESC $ n ...
+        vrstart: (widths, left, right) => '\x1b$0' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', left ? '\x9c' : '\x98').slice(0, -1) + (right ? '\x9d' : '\x99'),
+        // stop rules: ESC $ n ...
+        vrstop: (widths, left, right) => '\x1b$0' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', left ? '\x9e' : '\x9a').slice(0, -1) + (right ? '\x9f' : '\x9b'),
+    };
+
+    //
     // StarPRNT SBCS
     //
-    const _starsbcs = {
+    const _sbcs = {
         // print horizontal rule: ESC GS t n ...
         hr: width => '\x1b\x1dt\x01' + '\xc4'.repeat(width),
         // print vertical rules: ESC i n1 n2 ESC GS t n ...
@@ -2081,6 +2125,159 @@ limitations under the License.
         // stop rules: ESC GS t n ...
         vrstop: (widths, left, right) => '\x1b\x1dt\x01' + widths.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc1', '\xc0').slice(0, -1) + '\xd9',
     };
+
+    //
+    // Star Line Mode Common
+    //
+    const _line = {
+        position: 0,
+        rules: '',
+        // start printing: ESC @ ESC RS a n ESC RS F n ESC SP n ESC s n1 n2 (ESC z n) (ESC 0) (SI) (DC2)
+        open: function (printer) {
+            this.position = 0;
+            this.rules = '';
+            this.upsideDown = printer.upsideDown;
+            this.spacing = printer.spacing;
+            this.cutting = printer.cutting;
+            this.gradient = printer.gradient;
+            this.gamma = printer.gamma;
+            this.threshold = printer.threshold;
+            return '\x1b@\x1b\x1ea\x00\x1b\x1eF\x00\x1b 0\x1bs00' + (this.spacing ? '\x1bz1' : '\x1b0') + (this.upsideDown ? '\x0f' : '\x12');
+        },
+        // finish printing: ESC GS ETX s n1 n2 EOT
+        close: function () {
+            return (this.cutting ? this.cut() : '') + '\x1b\x1d\x03\x01\x00\x00\x04';
+        },
+        // set absolute print position: ESC GS A n1 n2
+        absolute: function (position) {
+            this.position = position;
+            const p = position * this.charWidth;
+            return '\x1b\x1dA' + $(p & 255, p >> 8 & 255);
+        },
+        // set relative print position: ESC GS R n1 n2
+        relative: function (position) {
+            this.position += Math.round(position);
+            const p = position * this.charWidth;
+            return '\x1b\x1dR' + $(p & 255, p >> 8 & 255);
+        },
+        vrlf: function (vr) {
+            return (vr === this.upsideDown && this.spacing ? '\x1bz1' : '\x1b0') + this.lf();
+        },
+        // feed new line: LF
+        lf: function () {
+            this.position = 0;
+            this.rules = '';
+            return '\x0a';
+        },
+        // print image: ESC k n1 n2 d1 ... dk
+        image: function (image, align, left, width, right) {
+            const img = PNG.sync.read(Buffer.from(image, 'base64'));
+            const w = img.width;
+            const h = img.height;
+            const d = Array(w).fill(0);
+            const l = w + 7 >> 3;
+            const s = [];
+            let j = 0;
+            for (let y = 0; y < h; y += 24) {
+                let r = '\x1bk' + $(l & 255, l >> 8 & 255);
+                for (let z = 0; z < 24; z++) {
+                    if (y + z < h) {
+                        let i = 0, e = 0;
+                        for (let x = 0; x < w; x += 8) {
+                            let b = 0;
+                            const q = Math.min(w - x, 8);
+                            for (let p = 0; p < q; p++) {
+                                const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / this.gamma) * 255);
+                                j += 4;
+                                if (this.gradient) {
+                                    d[i] = e * 3;
+                                    e = f < this.threshold ? (b |= 128 >> p, f) : f - 255;
+                                    if (i > 0) {
+                                        d[i - 1] += e;
+                                    }
+                                    d[i++] += e * 7;
+                                }
+                                else {
+                                    if (f < this.threshold) {
+                                        b |= 128 >> p;
+                                    }
+                                }
+                            }
+                            r += $(b);
+                        }
+                    }
+                    else {
+                        r += '\x00'.repeat(l);
+                    }
+                }
+                s.push(r + '\x0a');
+            }
+            if (this.upsideDown) {
+                s.reverse();
+            }
+            return '\x1b0' + this.area(left, width, right) + this.align(align) + s.join('') + (this.spacing ? '\x1bz1' : '\x1b0');
+        }
+    };
+
+    //
+    // Star Line Mode MBCS
+    //
+    const _linembcs = {
+        vrtable: {
+            ' '    : { ' ' : ' ',    '\x90' : '\x90', '\x95' : '\x95', '\x9a' : '\x9a', '\x9b' : '\x9b', '\x9e' : '\x9e', '\x9f' : '\x9f' },
+            '\x91' : { ' ' : '\x91', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x8f', '\x9e' : '\x8f', '\x9f' : '\x8f' },
+            '\x95' : { ' ' : '\x95', '\x90' : '\x90', '\x95' : '\x95', '\x9a' : '\x90', '\x9b' : '\x90', '\x9e' : '\x90', '\x9f' : '\x90' },
+            '\x98' : { ' ' : '\x98', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x93', '\x9b' : '\x8f', '\x9e' : '\x93', '\x9f' : '\x8f' },
+            '\x99' : { ' ' : '\x99', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x92', '\x9e' : '\x8f', '\x9f' : '\x92' },
+            '\x9c' : { ' ' : '\x9c', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x93', '\x9b' : '\x8f', '\x9e' : '\x93', '\x9f' : '\x8f' },
+            '\x9d' : { ' ' : '\x9d', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x92', '\x9e' : '\x8f', '\x9f' : '\x92' }
+        },
+        // start rules: ESC $ n ...
+        vrstart: function (widths, left, right) {
+            let r = widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', left ? '\x9c' : '\x98').slice(0, -1) + (right ? '\x9d' : '\x99');
+            const l = this.rules.length;
+            if (l > 0) {
+                const p = this.position;
+                r = r.split('').map((c, i) => this.vrtable[c][i + p < l ? this.rules[i + p] : ' ']).join('');
+            }
+            return '\x1b$0' + r;
+        },
+        // stop rules: ESC $ n ...
+        vrstop: function (widths, left, right) {
+            const r = widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', left ? '\x9e' : '\x9a').slice(0, -1) + (right ? '\x9f' : '\x9b');
+            this.rules = ' '.repeat(this.position) + r;
+            return '\x1b$0' + r;
+        }
+    };
+
+    //
+    // Star Line Mode SBCS
+    //
+    const _linesbcs = {
+        vrtable: {
+            ' '    : { ' ' : ' ',    '\xc0' : '\xc0', '\xc1' : '\xc1', '\xc4' : '\xc4', '\xd9' : '\xd9' },
+            '\xbf' : { ' ' : '\xbf', '\xc0' : '\xc5', '\xc1' : '\xc5', '\xc4' : '\xc2', '\xd9' : '\xb4' },
+            '\xc2' : { ' ' : '\xc2', '\xc0' : '\xc5', '\xc1' : '\xc5', '\xc4' : '\xc2', '\xd9' : '\xc5' },
+            '\xc4' : { ' ' : '\xc4', '\xc0' : '\xc1', '\xc1' : '\xc1', '\xc4' : '\xc4', '\xd9' : '\xc1' },
+            '\xda' : { ' ' : '\xda', '\xc0' : '\xc3', '\xc1' : '\xc5', '\xc4' : '\xc2', '\xd9' : '\xc5' }
+        },
+        // start rules: ESC GS t n ...
+        vrstart: function (widths, left, right) {
+            let r = widths.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc2', '\xda').slice(0, -1) + '\xbf';
+            const l = this.rules.length;
+            if (l > 0) {
+                const p = this.position;
+                r = r.split('').map((c, i) => this.vrtable[c][i + p < l ? this.rules[i + p] : ' ']).join('');
+            }
+            return '\x1b\x1dt\x01' + r;
+        },
+        // stop rules: ESC GS t n ...
+        vrstop: function (widths, left, right) {
+            const r = widths.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc1', '\xc0').slice(0, -1) + '\xd9';
+            this.rules = ' '.repeat(this.position) + r;
+            return '\x1b\x1dt\x01' + r;
+        }
+    }
 
     //
     // ESC/POS Impact
@@ -2098,6 +2295,9 @@ limitations under the License.
         upsideDown: false,
         spacing: false,
         cutting: true,
+        gradient: true,
+        gamma: 1.8,
+        threshold: 0,
         // start printing: ESC @ GS a n ESC M n (ESC 2) (ESC 3 n) ESC { n
         open: function (printer) {
             this.style = this.font;
@@ -2110,6 +2310,9 @@ limitations under the License.
             this.upsideDown = printer.upsideDown;
             this.spacing = printer.spacing;
             this.cutting = printer.cutting;
+            this.gradient = printer.gradient;
+            this.gamma = printer.gamma;
+            this.threshold = printer.threshold;
             return '\x1b@\x1da\x00\x1bM' + $(this.font) + (this.spacing ? '\x1b2' : '\x1b3\x12') + '\x1b{' + $(this.upsideDown) + '\x1c.';
         },
         // finish printing: GS r n
@@ -2263,7 +2466,7 @@ limitations under the License.
         // insert commands:
         command: command => command,
         // print image: ESC * 0 wL wH d1 ... dk ESC J n
-        image: function (image, gamma, align, left, width, right) {
+        image: function (image, align, left, width, right) {
             let r = this.align(align);
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
@@ -2276,14 +2479,21 @@ limitations under the License.
                     for (let p = 0; p < h; p++) {
                         let i = 0, e = 0;
                         for (let x = 0; x < w; x++) {
-                            const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / gamma) * 255);
+                            const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / this.gamma) * 255);
                             j += this.upsideDown ? -4 : 4;
-                            d[i] = e * 3;
-                            e = f < 128 ? (this.upsideDown ? b[w - x - 1] |= 1 << p : b[x] |= 128 >> p, f) : f - 255;
-                            if (i > 0) {
-                                d[i - 1] += e;
+                            if (this.gradient) {
+                                d[i] = e * 3;
+                                e = f < this.threshold ? (this.upsideDown ? b[w - x - 1] |= 1 << p : b[x] |= 128 >> p, f) : f - 255;
+                                if (i > 0) {
+                                    d[i - 1] += e;
+                                }
+                                d[i++] += e * 7;
                             }
-                            d[i++] += e * 7;
+                            else {
+                                if (f < this.threshold) {
+                                    this.upsideDown ? b[w - x - 1] |= 1 << p : b[x] |= 128 >> p;
+                                }
+                            }
                         }
                     }
                     r += '\x1b*\x00' + $(w & 255, w >> 8 & 255) + b.map(c => $(c)).join('') + '\x1bJ' + $(h * 2);
@@ -2306,8 +2516,10 @@ limitations under the License.
         escpos: Object.assign(Object.create(_base), _escpos),
         sii: Object.assign(Object.create(_base), _escpos, _sii),
         fit: Object.assign(Object.create(_base), _escpos, _fit),
-        starmbcs: Object.assign(Object.create(_base), _starmbcs),
-        starsbcs: Object.assign(Object.create(_base), _starmbcs, _starsbcs),
+        starmbcs: Object.assign(Object.create(_base), _star, _mbcs),
+        starsbcs: Object.assign(Object.create(_base), _star, _sbcs),
+        starlinembcs: Object.assign(Object.create(_base), _star, _mbcs, _line, _linembcs),
+        starlinesbcs: Object.assign(Object.create(_base), _star, _sbcs, _line, _linesbcs),
         impact: Object.assign(Object.create(_base), _impact),
         impactb: Object.assign(Object.create(_base), _impact, _impactb)
     };
