@@ -53,7 +53,7 @@ limitations under the License.
         // validate printer configuration
         const ptr = {
             cpl: printer.cpl || 48,
-            encoding: /^cp(437|85[28]|86[0356]|1252|932)$/.test(printer.encoding) ? printer.encoding : 'cp437',
+            encoding: /^(cp(437|85[28]|86[0356]|1252|93[26]|949|950)|shiftjis|gb18030|ksc5601|big5)$/.test(printer.encoding) ? printer.encoding : 'cp437',
             upsideDown: !!printer.upsideDown,
             spacing: !!printer.spacing,
             cutting: 'cutting' in printer ? !!printer.cutting : true,
@@ -78,7 +78,7 @@ limitations under the License.
                 res.push(ptr.command.normal() +
                     ptr.command.area(state.rules.left, state.rules.width, state.rules.right) +
                     ptr.command.align(0) +
-                    ptr.command.vrstop(state.rules.widths, 1, 1) +
+                    ptr.command.vrstop(state.rules.widths) +
                     ptr.command.vrlf(false));
                 state.line = 'waiting';
                 break;
@@ -271,7 +271,7 @@ limitations under the License.
             result.width = index < state.width.length ? state.width[index] : 0;
         }
         else if (state.width.find(c => c < 0)) {
-            // image, code, command: when the width property includes '*', set '*' 
+            // image, code, command: when the width property includes '*', set '*'
             result.width = -1;
         }
         else {
@@ -360,7 +360,7 @@ limitations under the License.
                     result.push(printer.command.normal() +
                         printer.command.area(left, width, right) +
                         printer.command.align(0) +
-                        printer.command.vrstart(widths, 1, 1) +
+                        printer.command.vrstart(widths) +
                         printer.command.vrlf(true));
                     state.line = 'running';
                     break;
@@ -372,11 +372,8 @@ limitations under the License.
                     const r = Math.min(right, state.rules.right);
                     result.push(printer.command.normal() +
                         printer.command.area(l, printer.cpl - l - r, r) +
-                        printer.command.align(0) + 
-                        printer.command.absolute(Math.max(-m, 0)) +
-                        printer.command.vrstop(state.rules.widths, m > 0, m + w < 0) +
-                        printer.command.absolute(Math.max(m, 0)) +
-                        printer.command.vrstart(widths, m < 0, m + w > 0) +
+                        printer.command.align(0) +
+                        printer.command.vrhr(state.rules.widths, widths, m, m + w) +
                         printer.command.lf());
                     state.line = 'running';
                     break;
@@ -460,7 +457,7 @@ limitations under the License.
                         result.push(printer.command.normal() +
                             printer.command.area(state.rules.left, state.rules.width, state.rules.right) +
                             printer.command.align(0) +
-                            printer.command.vrstop(state.rules.widths, 1, 1) +
+                            printer.command.vrstop(state.rules.widths) +
                             printer.command.vrlf(false));
                         // append commands to cut paper
                         result.push(printer.command.cut());
@@ -512,7 +509,7 @@ limitations under the License.
                         result.push(printer.command.normal() +
                             printer.command.area(state.rules.left, state.rules.width, state.rules.right) +
                             printer.command.align(0) +
-                            printer.command.vrstop(state.rules.widths, 1, 1) +
+                            printer.command.vrstop(state.rules.widths) +
                             printer.command.vrlf(false));
                         state.line = 'waiting';
                         break;
@@ -586,12 +583,13 @@ limitations under the License.
             // process text
             if (i % 2 === 0) {
                 // if text is not empty
-                while (text.length > 0) {
+                let t = Array.from(text);
+                while (t.length > 0) {
                     // measure character width
                     let w = 0;
                     let j = 0;
-                    while (j < text.length) {
-                        w = printer.command.measureText(text[j], printer.encoding) * (wh < 2 ? wh + 1 : wh - 1);
+                    while (j < t.length) {
+                        w = printer.command.measureText(t[j], printer.encoding) * (wh < 2 ? wh + 1 : wh - 1);
                         // output before protruding
                         if (w > space) {
                             break;
@@ -605,16 +603,16 @@ limitations under the License.
                         // append text decoration information
                         res.push((ul ? '1' : '0') + (em ? '1' : '0') + (iv ? '1' : '0') + wh);
                         // append text
-                        res.push(text.slice(0, j));
+                        res.push(t.slice(0, j).join(''));
                         // update text height
                         height = Math.max(height, wh < 3 ? wh : wh - 1);
                         // remaining text
-                        text = text.slice(j);
+                        t = t.slice(j);
                     }
                     // if character is too big
                     if (w > column.width) {
                         // do not output
-                        text = text.slice(1);
+                        t = t.slice(1);
                         continue;
                     }
                     // if there is no spece left
@@ -676,21 +674,28 @@ limitations under the License.
          * Function - measureText
          * Measure character width
          * @param {string} text string to measure
-         * @param {string} encoding codepage ('cp437', 'cp852', 'cp858', 'cp860', 'cp863', 'cp865', 'cp866', 'cp932', 'cp1252')
+         * @param {string} encoding codepage
          * @returns {number} string width
          */
         measureText: function (text, encoding) {
             let r = 0;
-            if (typeof iconv !== 'undefined') {
-                r = iconv.encode(text, encoding).toString('binary').length;
-            }
-            else if (typeof document !== 'undefined') {
-                const context = document.createElement('canvas').getContext('2d');
-                context.font = `${this.charWidth * 2}px ${encoding === 'cp932' ? "'MS Gothic', 'San Francisco', 'Osaka-Mono', " : ""}'Courier New', 'Courier', monospace`;
-                r = text.split('').reduce((a, c) => a + Math.round(context.measureText(c).width / this.charWidth), 0);
-            }
-            else {
-                // nothing to do
+            const t = Array.from(text);
+            switch (encoding) {
+                case 'cp932':
+                case 'shiftjis':
+                    r = t.map(c => c.codePointAt(0)).reduce((a, d) => a + (d < 0x80 || d === 0xa5 || d === 0x203e || (d > 0xff60 && d < 0xffa0) ? 1 : 2), 0);
+                    break;
+                case 'cp936':
+                case 'gb18030':
+                case 'cp949':
+                case 'ksc5601':
+                case 'cp950':
+                case 'big5':
+                    r = t.map(c => c.codePointAt(0)).reduce((a, d) => a + (d < 0x80 ? 1 : 2), 0);
+                    break;
+                default:
+                    r = t.length;
+                    break;
             }
             return r;
         },
@@ -702,14 +707,14 @@ limitations under the License.
          * @returns {string} commands
          */
         open: printer => '',
-    
+
         /**
          * Function - close
          * Finish printing
          * @returns {string} commands
          */
         close: () => '',
-    
+
         /**
          * Function - area
          * Set print area
@@ -719,7 +724,7 @@ limitations under the License.
          * @returns {string} commands
          */
         area: (left, width, right) => '',
-    
+
         /**
          * Function - align
          * Set line alignment
@@ -727,7 +732,7 @@ limitations under the License.
          * @returns {string} commands
          */
         align: align => '',
-    
+
         /**
          * Function - absolute
          * Set absolute print position
@@ -735,7 +740,7 @@ limitations under the License.
          * @returns {string} commands
          */
         absolute: position => '',
-    
+
         /**
          * Function - relative
          * Set relative print position
@@ -743,7 +748,7 @@ limitations under the License.
          * @returns {string} commands
          */
         relative: position => '',
-    
+
         /**
          * Function - hr
          * Print horizontal rule
@@ -751,7 +756,7 @@ limitations under the License.
          * @returns {string} commands
          */
         hr: width => '',
-    
+
         /**
          * Function - vr
          * Print vertical rules
@@ -760,27 +765,34 @@ limitations under the License.
          * @returns {string} commands
          */
         vr: (widths, height) => '',
-    
+
         /**
          * Function - vrstart
          * Start rules
          * @param {Array<number>} widths vertical line spacing
-         * @param {boolean} left round left corner
-         * @param {boolean} right round right corner
          * @returns {string} commands
          */
-        vrstart: (widths, left, right) => '',
-    
+        vrstart: widths => '',
+
         /**
          * Function - vrstop
          * Stop rules
          * @param {Array<number>} widths vertical line spacing
-         * @param {boolean} left round left corner
-         * @param {boolean} right round right corner
          * @returns {string} commands
          */
-        vrstop: (widths, left, right) => '',
-    
+        vrstop: widths => '',
+
+        /**
+         * Function - vrhr
+         * Print vertical and horizontal rules
+         * @param {Array<number>} widths1 vertical line spacing (stop)
+         * @param {Array<number>} widths2 vertical line spacing (start)
+         * @param {number} dl difference in left position
+         * @param {number} dr difference in right position
+         * @returns {string} commands
+         */
+        vrhr: (widths1, widths2, dl, dr) => '',
+
         /**
          * Function - vrlf
          * Set line spacing and feed new line
@@ -795,28 +807,28 @@ limitations under the License.
          * @returns {string} commands
          */
         cut: () => '',
-    
+
         /**
          * Function - ul
          * Underline text
          * @returns {string} commands
          */
         ul: () => '',
-    
+
         /**
          * Function - em
          * Emphasize text
          * @returns {string} commands
          */
         em: () => '',
-    
+
         /**
          * Function - iv
          * Invert text
          * @returns {string} commands
          */
         iv: () => '',
-    
+
         /**
          * Function - wh
          * Scale up text
@@ -824,30 +836,30 @@ limitations under the License.
          * @returns {string} commands
          */
         wh: wh => '',
-    
+
         /**
          * Function - normal
          * Cancel text decoration
          * @returns {string} commands
          */
         normal: () => '',
-    
+
         /**
          * Function - text
          * Print text
          * @param {string} text string to print
-         * @param {string} encoding codepage ('cp437', 'cp852', 'cp858', 'cp860', 'cp863', 'cp865', 'cp866', 'cp932', 'cp1252')
+         * @param {string} encoding codepage
          * @returns {number} commands
          */
         text: (text, encoding) => '',
-    
+
         /**
          * Function - lf
          * Feed new line
          * @returns {string} commands
          */
         lf: () => '',
-    
+
         /**
          * Function - command
          * insert commands
@@ -855,7 +867,7 @@ limitations under the License.
          * @returns {string} commands
          */
         command: command => '',
-    
+
         /**
          * Function - image
          * Print image
@@ -867,26 +879,26 @@ limitations under the License.
          * @returns {string} commands
          */
         image: (image, align, left, width, right) => '',
-    
+
         /**
          * Function - qrcode
          * Print QR Code
          * @param {object} symbol QR Code information (data, type, cell, level)
-         * @param {string} encoding codepage ('cp437', 'cp852', 'cp858', 'cp860', 'cp863', 'cp865', 'cp866', 'cp932', 'cp1252')
+         * @param {string} encoding codepage
          * @returns {number} commands
          */
         qrcode: (symbol, encoding) => '',
-    
+
         /**
          * Function - barcode
          * Print barcode
          * @param {object} symbol barcode information (data, type, width, height, hri)
-         * @param {string} encoding codepage ('cp437', 'cp852', 'cp858', 'cp860', 'cp863', 'cp865', 'cp866', 'cp932', 'cp1252')
+         * @param {string} encoding codepage
          * @returns {number} commands
          */
         barcode: (symbol, encoding) => ''
     };
-    
+
     //
     // SVG
     //
@@ -903,7 +915,6 @@ limitations under the License.
         textPosition: 0,
         textScale: 1,
         textEncoding: '',
-        fontFamily: '',
         feedMinimum: 24,
         // printer configuration
         spacing: false,
@@ -921,19 +932,51 @@ limitations under the License.
             this.textPosition = 0;
             this.textScale = 1;
             this.textEncoding = printer.encoding;
-            this.fontFamily = `${printer.encoding === 'cp932' ? "'Kosugi Maru', 'MS Gothic', 'San Francisco', 'Osaka-Mono'" : "'Courier Prime'"}, 'Courier New', 'Courier', monospace`;
-            this.fontSize = this.charWidth * 2 + (printer.encoding === 'cp932' ? 0 : -2);
-            this.stylesheet = `@import url("https://fonts.googleapis.com/css2?family=${printer.encoding === 'cp932' ? 'Kosugi+Maru' : 'Courier+Prime'}&display=swap");`;
             this.feedMinimum = Number(this.charWidth * (printer.spacing ? 2.5 : 2));
             this.spacing = printer.spacing;
             return '';
         },
         // finish printing:
         close: function () {
+            const p = { font: 'monospace', size: this.charWidth * 2, style: '', lang: '' };
+            switch (this.textEncoding) {
+                case 'cp932':
+                case 'shiftjis':
+                    p.font = `'Kosugi Maru', 'MS Gothic', 'San Francisco', 'Osaka-Mono', monospace`;
+                    p.style = '@import url("https://fonts.googleapis.com/css2?family=Kosugi+Maru&display=swap");';
+                    p.lang = 'ja';
+                    break;
+                case 'cp936':
+                case 'gb18030':
+                    p.size -= 2;
+                    p.lang = 'zh-Hans';
+                    break;
+                case 'cp949':
+                case 'ksc5601':
+                    p.size -= 2;
+                    p.lang = 'ko';
+                    break;
+                case 'cp950':
+                case 'big5':
+                    p.size -= 2;
+                    p.lang = 'zh-Hant';
+                    break;
+                default:
+                    p.font = `'Courier Prime', 'Courier New', 'Courier', monospace`;
+                    p.size -= 2;
+                    p.style = '@import url("https://fonts.googleapis.com/css2?family=Courier+Prime&display=swap");';
+                    break;
+            }
+            if (p.style.length > 0) {
+                p.style = `<style type="text/css"><![CDATA[${p.style}]]></style>`;
+            }
+            if (p.lang.length > 0) {
+                p.lang = ` xml:lang="${p.lang}"`;
+            }
             return `<svg width="${this.svgWidth}px" height="${this.svgHeight}px" viewBox="0 0 ${this.svgWidth} ${this.svgHeight}" preserveAspectRatio="xMinYMin meet" ` +
-                `xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1"><style type="text/css"><![CDATA[${this.stylesheet}]]></style>` +
+                `xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1">${p.style}` +
                 `<defs><filter id="receiptlineinvert" x="0" y="0" width="100%" height="100%"><feFlood flood-color="#000"/><feComposite in="SourceGraphic" operator="xor"/></filter></defs>` +
-                `<g font-family="${this.fontFamily}" fill="#000" font-size="${this.fontSize}" dominant-baseline="text-after-edge" text-anchor="middle">${this.svgContent}</g></svg>\n`;
+                `<g font-family="${p.font}" fill="#000" font-size="${p.size}" dominant-baseline="text-after-edge" text-anchor="middle"${p.lang}>${this.svgContent}</g></svg>\n`;
         },
         // set print area:
         area: function (left, width, right) {
@@ -960,28 +1003,37 @@ limitations under the License.
         hr: function (width) {
             const w = this.charWidth;
             const path = `<path d="M0,${w}h${w * width}" fill="none" stroke="#000" stroke-width="2"/>`;
-            this.svgContent += `<g transform="translate(${(this.lineMargin + this.textPosition) * w},${this.svgHeight})">${path}</g>`;
+            this.svgContent += `<g transform="translate(${this.lineMargin * w},${this.svgHeight})">${path}</g>`;
             return '';
         },
         // print vertical rules:
         vr: function (widths, height) {
             const w = this.charWidth, u = w / 2, v = (w + w) * height;
             const path = `<path d="` + widths.reduce((a, width) => a + `m${w * width + w},${-v}v${v}`, `M${u},0v${v}`) + `" fill="none" stroke="#000" stroke-width="2"/>`;
-            this.svgContent += `<g transform="translate(${(this.lineMargin + this.textPosition) * w},${this.svgHeight})">${path}</g>`;
+            this.svgContent += `<g transform="translate(${this.lineMargin * w},${this.svgHeight})">${path}</g>`;
             return '';
         },
         // start rules:
-        vrstart: function (widths, left, right) {
+        vrstart: function (widths) {
             const w = this.charWidth, u = w / 2;
-            const path = `<path d="` + widths.reduce((a, width) => a + `h${w * width}h${u}v${w}m0,${-w}h${u}`, `M${u},${w + w}` + (left ? `v${-u}q0,${-u},${u},${-u}`: `v${-w}h${u}`)).replace(/h\d+v\d+m0,-\d+h\d+$/, right ? `q${u},0,${u},${u}v${u}` : `h${u}v${w}`) + `" fill="none" stroke="#000" stroke-width="2"/>`;
-            this.svgContent += `<g transform="translate(${(this.lineMargin + this.textPosition) * w},${this.svgHeight})">${path}</g>`;
+            const path = `<path d="` + widths.reduce((a, width) => a + `h${w * width}h${u}v${w}m0,${-w}h${u}`, `M${u},${w + w}v${-u}q0,${-u},${u},${-u}`).replace(/h\d+v\d+m0,-\d+h\d+$/, `q${u},0,${u},${u}v${u}`) + `" fill="none" stroke="#000" stroke-width="2"/>`;
+            this.svgContent += `<g transform="translate(${this.lineMargin * w},${this.svgHeight})">${path}</g>`;
             return '';
         },
         // stop rules:
-        vrstop: function (widths, left, right) {
+        vrstop: function (widths) {
             const w = this.charWidth, u = w / 2;
-            const path = `<path d="` + widths.reduce((a, width) => a + `h${w * width}h${u}v${-w}m0,${w}h${u}`, `M${u},0` + (left ? `v${u}q0,${u},${u},${u}`: `v${w}h${u}`)).replace(/h\d+v-\d+m0,\d+h\d+$/, right ? `q${u},0,${u},${-u}v${-u}` : `h${u}v${-w}`) + `" fill="none" stroke="#000" stroke-width="2"/>`;
-            this.svgContent += `<g transform="translate(${(this.lineMargin + this.textPosition) * w},${this.svgHeight})">${path}</g>`;
+            const path = `<path d="` + widths.reduce((a, width) => a + `h${w * width}h${u}v${-w}m0,${w}h${u}`, `M${u},0v${u}q0,${u},${u},${u}`).replace(/h\d+v-\d+m0,\d+h\d+$/, `q${u},0,${u},${-u}v${-u}`) + `" fill="none" stroke="#000" stroke-width="2"/>`;
+            this.svgContent += `<g transform="translate(${this.lineMargin * w},${this.svgHeight})">${path}</g>`;
+            return '';
+        },
+        // print vertical and horizontal rules:
+        vrhr: function (widths1, widths2, dl, dr) {
+            const w = this.charWidth, u = w / 2;
+            const path1 = `<path d="` + widths1.reduce((a, width) => a + `h${w * width}h${u}v${-w}m0,${w}h${u}`, `M${u},0` + (dl > 0 ? `v${u}q0,${u},${u},${u}`: `v${w}h${u}`)).replace(/h\d+v-\d+m0,\d+h\d+$/, dr < 0 ? `q${u},0,${u},${-u}v${-u}` : `h${u}v${-w}`) + `" fill="none" stroke="#000" stroke-width="2"/>`;
+            this.svgContent += `<g transform="translate(${(this.lineMargin + Math.max(-dl, 0)) * w},${this.svgHeight})">${path1}</g>`;
+            const path2 = `<path d="` + widths2.reduce((a, width) => a + `h${w * width}h${u}v${w}m0,${-w}h${u}`, `M${u},${w + w}` + (dl < 0 ? `v${-u}q0,${-u},${u},${-u}`: `v${-w}h${u}`)).replace(/h\d+v\d+m0,-\d+h\d+$/, dr > 0 ? `q${u},0,${u},${u}v${u}` : `h${u}v${w}`) + `" fill="none" stroke="#000" stroke-width="2"/>`;
+            this.svgContent += `<g transform="translate(${(this.lineMargin + Math.max(dl, 0)) * w},${this.svgHeight})">${path2}</g>`;
             return '';
         },
         // set line spacing and feed new line:
@@ -991,11 +1043,9 @@ limitations under the License.
         },
         // cut paper:
         cut: function () {
-            this.normal();
-            this.absolute(-this.lineMargin);
-            this.text('\u2702' + '\u2505'.repeat(this.svgWidth / this.charWidth - 1), this.textEncoding);
-            this.lf();
-            return '';
+            const path = `<path d="M12,12.5l-7.5,-3a2,2,0,1,1,.5,0M12,11.5l-7.5,3a2,2,0,1,0,.5,0" fill="none" stroke="#000" stroke-width="1"/><path d="M12,12l10,-4q-1,-1,-2.5,-1l-10,4v2l10,4q1.5,0,2.5,-1z" fill="#000"/><path d="M24,12h${this.svgWidth - 24}" fill="none" stroke="#000" stroke-width="2" stroke-dasharray="2"/>`;
+            this.svgContent += `<g transform="translate(0,${this.svgHeight})">${path}</g>`;
+            return this.lf();
         },
         // underline text:
         ul: function () {
@@ -1030,7 +1080,7 @@ limitations under the License.
         // print text:
         text: function (text, encoding) {
             let p = this.textPosition;
-            this.textAttributes.x = text.split('').map(c => {
+            this.textAttributes.x = Array.from(text).map(c => {
                 const q = this.measureText(c, encoding) * this.textScale;
                 const r = (p + q / 2) * this.charWidth / this.textScale;
                 p += q;
@@ -1449,7 +1499,7 @@ limitations under the License.
     };
 
     //
-    // ESC/POS
+    // ESC/POS Common
     //
     const _escpos = {
         // printer configuration
@@ -1459,6 +1509,31 @@ limitations under the License.
         gradient: true,
         gamma: 1.8,
         threshold: 128,
+        // ruled line composition
+        vrtable: {
+            ' '    : { ' ' : ' ',    '\x90' : '\x90', '\x95' : '\x95', '\x9a' : '\x9a', '\x9b' : '\x9b', '\x9e' : '\x9e', '\x9f' : '\x9f' },
+            '\x91' : { ' ' : '\x91', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x8f', '\x9e' : '\x8f', '\x9f' : '\x8f' },
+            '\x95' : { ' ' : '\x95', '\x90' : '\x90', '\x95' : '\x95', '\x9a' : '\x90', '\x9b' : '\x90', '\x9e' : '\x90', '\x9f' : '\x90' },
+            '\x98' : { ' ' : '\x98', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x93', '\x9b' : '\x8f', '\x9e' : '\x93', '\x9f' : '\x8f' },
+            '\x99' : { ' ' : '\x99', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x92', '\x9e' : '\x8f', '\x9f' : '\x92' },
+            '\x9c' : { ' ' : '\x9c', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x93', '\x9b' : '\x8f', '\x9e' : '\x93', '\x9f' : '\x8f' },
+            '\x9d' : { ' ' : '\x9d', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x92', '\x9e' : '\x8f', '\x9f' : '\x92' }
+        },
+        // codepages: (ESC t n) (FS &) (FS C n) (ESC R n)
+        codepage: {
+            cp437: '\x1bt\x00', cp852: '\x1bt\x12', cp858: '\x1bt\x13', cp860: '\x1bt\x03',
+            cp863: '\x1bt\x04', cp865: '\x1bt\x05', cp866: '\x1bt\x11', cp1252: '\x1bt\x10',
+            cp932: '\x1bt\x01\x1cC1\x1bR\x08', cp936: '\x1bt\x00\x1c&',
+            cp949: '\x1bt\x00\x1c&\x1bR\x0d', cp950: '\x1bt\x00\x1c&',
+            shiftjis: '\x1bt\x01\x1cC1\x1bR\x08', gb18030: '\x1bt\x00\x1c&',
+            ksc5601: '\x1bt\x00\x1c&\x1bR\x0d', big5: '\x1bt\x00\x1c&'
+        }
+    };
+
+    //
+    // ESC/POS Thermal
+    //
+    const _thermal = {
         // start printing: ESC @ GS a n ESC M n FS ( A pL pH fn m ESC SP n FS S n1 n2 (ESC 2) (ESC 3 n) ESC { n
         open: function (printer) {
             this.upsideDown = printer.upsideDown;
@@ -1491,16 +1566,22 @@ limitations under the License.
             const p = position * this.charWidth;
             return '\x1b\\' + $(p & 255, p >> 8 & 255);
         },
-        // print horizontal rule: FS C n ESC t n ...
-        hr: width => '\x1cC0\x1bt\x01' + '\x95'.repeat(width),
-        // print vertical rules: GS ! n FS C n ESC t n ...
+        // print horizontal rule: FS C n FS . ESC t n ...
+        hr: width => '\x1cC0\x1c.\x1bt\x01' + '\x95'.repeat(width),
+        // print vertical rules: GS ! n FS C n FS . ESC t n ...
         vr: function (widths, height) {
-            return widths.reduce((a, w) => a + this.relative(w) + '\x96', '\x1d!' + $(height - 1) + '\x1cC0\x1bt\x01\x96');
+            return widths.reduce((a, w) => a + this.relative(w) + '\x96', '\x1d!' + $(height - 1) + '\x1cC0\x1c.\x1bt\x01\x96');
         },
-        // start rules: FS C n ESC t n ...
-        vrstart: (widths, left, right) => '\x1cC0\x1bt\x01' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', left ? '\x9c' : '\x98').slice(0, -1) + (right ? '\x9d' : '\x99'),
-        // stop rules: FS C n ESC t n ...
-        vrstop: (widths, left, right) => '\x1cC0\x1bt\x01' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', left ? '\x9e' : '\x9a').slice(0, -1) + (right ? '\x9f' : '\x9b'),
+        // start rules: FS C n FS . ESC t n ...
+        vrstart: widths => '\x1cC0\x1c.\x1bt\x01' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', '\x9c').slice(0, -1) + '\x9d',
+        // stop rules: FS C n FS . ESC t n ...
+        vrstop: widths => '\x1cC0\x1c.\x1bt\x01' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', '\x9e').slice(0, -1) + '\x9f',
+        // print vertical and horizontal rules: FS C n FS . ESC t n ...
+        vrhr: function (widths1, widths2, dl, dr) {
+            const r1 = ' '.repeat(Math.max(-dl, 0)) + widths1.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', dl > 0 ? '\x9e' : '\x9a').slice(0, -1) + (dr < 0 ? '\x9f' : '\x9b') + ' '.repeat(Math.max(dr, 0));
+            const r2 = ' '.repeat(Math.max(dl, 0)) + widths2.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', dl < 0 ? '\x9c' : '\x98').slice(0, -1) + (dr > 0 ? '\x9d' : '\x99') + ' '.repeat(Math.max(-dr, 0));
+            return '\x1cC0\x1c.\x1bt\x01' + r2.split('').map((c, i) => this.vrtable[c][r1[i]]).join('');
+        },
         // set line spacing and feed new line: (ESC 2) (ESC 3 n)
         vrlf: function (vr) {
             return (vr === this.upsideDown && this.spacing ? '\x1b2' : '\x1b3\x00') + this.lf();
@@ -1520,12 +1601,6 @@ limitations under the License.
         // print text:
         text: function (text, encoding) {
             return this.codepage[encoding] + iconv.encode(text, encoding).toString('binary')
-        },
-        // codepages: (ESC t n) (FS C n ESC R n)
-        codepage: {
-            cp437: '\x1bt\x00', cp852: '\x1bt\x12', cp858: '\x1bt\x13', cp860: '\x1bt\x03',
-            cp863: '\x1bt\x04', cp865: '\x1bt\x05', cp866: '\x1bt\x11', cp1252: '\x1bt\x10',
-            cp932: '\x1bt\x01\x1cC1\x1bR\x08'
         },
         // feed new line: LF
         lf: () => '\x0a',
@@ -1889,6 +1964,12 @@ limitations under the License.
     };
 
     //
+    // Citizen
+    //
+    const _citizen = {
+    };
+
+    //
     // Fujitsu Isotec
     //
     const _fit = {
@@ -1930,6 +2011,202 @@ limitations under the License.
             r += '\x1d(L' + $(2, 0, 48, 50);
             return r;
         }
+    };
+
+    //
+    // ESC/POS Impact
+    //
+    const _impact = {
+        font: 0,
+        style: 0,
+        color: 0,
+        margin: 0,
+        position: 0,
+        red: [],
+        black: [],
+        // start printing: ESC @ GS a n ESC M n (ESC 2) (ESC 3 n) ESC { n
+        open: function (printer) {
+            this.style = this.font;
+            this.color = 0;
+            this.margin = 0;
+            this.position = 0;
+            this.red = [];
+            this.black = [];
+            this.upsideDown = printer.upsideDown;
+            this.spacing = printer.spacing;
+            this.cutting = printer.cutting;
+            this.gradient = printer.gradient;
+            this.gamma = printer.gamma;
+            this.threshold = printer.threshold;
+            return '\x1b@\x1da\x00\x1bM' + $(this.font) + (this.spacing ? '\x1b2' : '\x1b3\x12') + '\x1b{' + $(this.upsideDown) + '\x1c.';
+        },
+        // finish printing: GS r n
+        close: function () {
+            return (this.cutting ? this.cut() : '') + '\x1dr1';
+        },
+        // set print area:
+        area: function (left, width, right) {
+            this.margin = left;
+            return '';
+        },
+        // set line alignment: ESC a n
+        align: align => '\x1ba' + $(align),
+        // set absolute print position:
+        absolute: function (position) {
+            this.position = position;
+            return '';
+        },
+        // set relative print position:
+        relative: function (position) {
+            this.position += Math.round(position);
+            return '';
+        },
+        // print horizontal rule: ESC t n ...
+        hr: function (width) {
+            return '\x1b!' + $(this.font) + ' '.repeat(this.margin) + '\x1bt\x01' + '\x95'.repeat(width);
+        },
+        // print vertical rules: ESC ! n ESC t n ...
+        vr: function (widths, height) {
+            const d = '\x1b!' + $(this.font + (height > 1 ? 16 : 0)) + '\x1bt\x01\x96';
+            this.black.push({ data: d, index: this.position, length: 1 });
+            widths.forEach(w => {
+                this.position += w + 1;
+                this.black.push({ data: d, index: this.position, length: 1 });
+            });
+            return '';
+        },
+        // start rules: ESC ! n ESC t n ...
+        vrstart: function (widths) {
+            return '\x1b!' + $(this.font) + ' '.repeat(this.margin) + '\x1bt\x01' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', '\x9c').slice(0, -1) + '\x9d';
+        },
+        // stop rules: ESC ! n ESC t n ...
+        vrstop: function (widths) {
+            return '\x1b!' + $(this.font) + ' '.repeat(this.margin) + '\x1bt\x01' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', '\x9e').slice(0, -1) + '\x9f';
+        },
+        // print vertical and horizontal rules: ESC ! n ESC t n ...
+        vrhr: function (widths1, widths2, dl, dr) {
+            const r1 = ' '.repeat(Math.max(-dl, 0)) + widths1.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', dl > 0 ? '\x9e' : '\x9a').slice(0, -1) + (dr < 0 ? '\x9f' : '\x9b') + ' '.repeat(Math.max(dr, 0));
+            const r2 = ' '.repeat(Math.max(dl, 0)) + widths2.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', dl < 0 ? '\x9c' : '\x98').slice(0, -1) + (dr > 0 ? '\x9d' : '\x99') + ' '.repeat(Math.max(-dr, 0));
+            return '\x1b!' + $(this.font) + ' '.repeat(this.margin) + '\x1bt\x01' + r2.split('').map((c, i) => this.vrtable[c][r1[i]]).join('');
+        },
+        // set line spacing and feed new line: (ESC 2) (ESC 3 n)
+        vrlf: function (vr) {
+            return (vr === this.upsideDown && this.spacing ? '\x1b2' : '\x1b3\x12') + this.lf();
+        },
+        // cut paper: GS V m n
+        cut: () => '\x1dVB\x00',
+        // underline text:
+        ul: function () {
+            this.style += 128;
+            return '';
+        },
+        // emphasize text:
+        em: function () {
+            this.style += 8;
+            return '';
+        },
+        // invert text:
+        iv: function () {
+            this.color = 1;
+            return '';
+        },
+        // scale up text:
+        wh: function (wh) {
+            if (wh > 0) {
+                this.style += wh < 3 ? 64 >> wh : 48;
+            }
+            return '';
+        },
+        // cancel text decoration:
+        normal: function () {
+            this.style = this.font;
+            this.color = 0;
+            return '';
+        },
+        // print text:
+        text: function (text, encoding) {
+            const t = iconv.encode(text, encoding).toString('binary');
+            const d = '\x1b!' + $(this.style) + this.codepage[encoding] + t;
+            const l = t.length * (this.style & 32 ? 2 : 1);
+            if (this.color > 0) {
+                this.red.push({ data: d, index: this.position, length: l });
+            }
+            else {
+                this.black.push({ data: d, index: this.position, length: l });
+            }
+            this.position += l;
+            return '';
+        },
+        // feed new line: LF
+        lf: function () {
+            let r = '';
+            if (this.red.length > 0) {
+                let p = 0;
+                r += this.red.sort((a, b) => a.index - b.index).reduce((a, c) => {
+                    const s = a + '\x1b!' + $(this.font) + ' '.repeat(c.index - p) + c.data;
+                    p = c.index + c.length;
+                    return s;
+                }, '\x1br\x01\x1b!' + $(this.font) + ' '.repeat(this.margin)) + '\x0d\x1br\x00';
+            }
+            if (this.black.length > 0) {
+                let p = 0;
+                r += this.black.sort((a, b) => a.index - b.index).reduce((a, c) => {
+                    const s = a + '\x1b!' + $(this.font) + ' '.repeat(c.index - p) + c.data;
+                    p = c.index + c.length;
+                    return s;
+                }, '\x1b!' + $(this.font) + ' '.repeat(this.margin));
+            }
+            r += '\x0a';
+            this.position = 0;
+            this.red = [];
+            this.black = [];
+            return r;
+        },
+        // insert commands:
+        command: command => command,
+        // print image: ESC * 0 wL wH d1 ... dk ESC J n
+        image: function (image, align, left, width, right) {
+            let r = this.align(align);
+            const img = PNG.sync.read(Buffer.from(image, 'base64'));
+            const w = img.width;
+            if (w < 1024) {
+                const d = Array(w).fill(0);
+                let j = this.upsideDown ? img.data.length - 4 : 0;
+                for (let y = 0; y < img.height; y += 8) {
+                    const b = Array(w).fill(0);
+                    const h = Math.min(8, img.height - y);
+                    for (let p = 0; p < h; p++) {
+                        let i = 0, e = 0;
+                        for (let x = 0; x < w; x++) {
+                            const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / this.gamma) * 255);
+                            j += this.upsideDown ? -4 : 4;
+                            if (this.gradient) {
+                                d[i] = e * 3;
+                                e = f < this.threshold ? (this.upsideDown ? b[w - x - 1] |= 1 << p : b[x] |= 128 >> p, f) : f - 255;
+                                if (i > 0) {
+                                    d[i - 1] += e;
+                                }
+                                d[i++] += e * 7;
+                            }
+                            else {
+                                if (f < this.threshold) {
+                                    this.upsideDown ? b[w - x - 1] |= 1 << p : b[x] |= 128 >> p;
+                                }
+                            }
+                        }
+                    }
+                    r += '\x1b*\x00' + $(w & 255, w >> 8 & 255) + b.map(c => $(c)).join('') + '\x1bJ' + $(h * 2);
+                }
+            }
+            return r;
+        }
+    };
+
+    //
+    // ESC/POS Impact Font B
+    //
+    const _fontb = {
+        font: 1
     };
 
     //
@@ -1991,11 +2268,12 @@ limitations under the License.
         text: function (text, encoding) {
             return this.codepage[encoding] + iconv.encode(text, encoding).toString('binary');
         },
-        // codepages: (ESC GS t n) (ESC $ n ESC R n)
+        // codepages: (ESC GS t n) (ESC $ n) (ESC R n)
         codepage: {
             cp437: '\x1b\x1dt\x01', cp852: '\x1b\x1dt\x05', cp858: '\x1b\x1dt\x04', cp860: '\x1b\x1dt\x06',
             cp863: '\x1b\x1dt\x08', cp865: '\x1b\x1dt\x09', cp866: '\x1b\x1dt\x0a', cp1252: '\x1b\x1dt\x20',
-            cp932: '\x1b$1\x1bR8'
+            cp932: '\x1b$1\x1bR8', cp936: '', cp949: '\x1bRD', cp950: '',
+            shiftjis: '\x1b$1\x1bR8', gb18030: '', ksc5601: '\x1bRD', big5: ''
         },
         // feed new line: LF
         lf: () => '\x0a',
@@ -2095,79 +2373,15 @@ limitations under the License.
     };
 
     //
-    // StarPRNT MBCS
-    //
-    const _mbcs = {
-        // print horizontal rule: ESC $ n ...
-        hr: width => '\x1b$0' + '\x95'.repeat(width),
-        // print vertical rules: ESC i n1 n2 ESC $ n ...
-        vr: function (widths, height) {
-            return widths.reduce((a, w) => a + this.relative(w) + '\x96', '\x1bi' + $(height - 1, 0) + '\x1b$0\x96');
-        },
-        // start rules: ESC $ n ...
-        vrstart: (widths, left, right) => '\x1b$0' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', left ? '\x9c' : '\x98').slice(0, -1) + (right ? '\x9d' : '\x99'),
-        // stop rules: ESC $ n ...
-        vrstop: (widths, left, right) => '\x1b$0' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', left ? '\x9e' : '\x9a').slice(0, -1) + (right ? '\x9f' : '\x9b'),
-    };
-
-    //
-    // StarPRNT SBCS
-    //
-    const _sbcs = {
-        // print horizontal rule: ESC GS t n ...
-        hr: width => '\x1b\x1dt\x01' + '\xc4'.repeat(width),
-        // print vertical rules: ESC i n1 n2 ESC GS t n ...
-        vr: function (widths, height) {
-            return widths.reduce((a, w) => a + this.relative(w) + '\xb3', '\x1bi' + $(height - 1, 0) + '\x1b\x1dt\x01\xb3');
-        },
-        // start rules: ESC GS t n ...
-        vrstart: (widths, left, right) => '\x1b\x1dt\x01' + widths.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc2', '\xda').slice(0, -1) + '\xbf',
-        // stop rules: ESC GS t n ...
-        vrstop: (widths, left, right) => '\x1b\x1dt\x01' + widths.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc1', '\xc0').slice(0, -1) + '\xd9',
-    };
-
-    //
-    // Star Line Mode Common
+    // Star Line Mode
     //
     const _line = {
-        position: 0,
-        rules: '',
-        // start printing: ESC @ ESC RS a n ESC RS F n ESC SP n ESC s n1 n2 (ESC z n) (ESC 0) (SI) (DC2)
-        open: function (printer) {
-            this.position = 0;
-            this.rules = '';
-            this.upsideDown = printer.upsideDown;
-            this.spacing = printer.spacing;
-            this.cutting = printer.cutting;
-            this.gradient = printer.gradient;
-            this.gamma = printer.gamma;
-            this.threshold = printer.threshold;
-            return '\x1b@\x1b\x1ea\x00\x1b\x1eF\x00\x1b 0\x1bs00' + (this.spacing ? '\x1bz1' : '\x1b0') + (this.upsideDown ? '\x0f' : '\x12');
-        },
         // finish printing: ESC GS ETX s n1 n2 EOT
         close: function () {
             return (this.cutting ? this.cut() : '') + '\x1b\x1d\x03\x01\x00\x00\x04';
         },
-        // set absolute print position: ESC GS A n1 n2
-        absolute: function (position) {
-            this.position = position;
-            const p = position * this.charWidth;
-            return '\x1b\x1dA' + $(p & 255, p >> 8 & 255);
-        },
-        // set relative print position: ESC GS R n1 n2
-        relative: function (position) {
-            this.position += Math.round(position);
-            const p = position * this.charWidth;
-            return '\x1b\x1dR' + $(p & 255, p >> 8 & 255);
-        },
         vrlf: function (vr) {
             return (vr === this.upsideDown && this.spacing ? '\x1bz1' : '\x1b0') + this.lf();
-        },
-        // feed new line: LF
-        lf: function () {
-            this.position = 0;
-            this.rules = '';
-            return '\x0a';
         },
         // print image: ESC k n1 n2 d1 ... dk
         image: function (image, align, left, width, right) {
@@ -2220,137 +2434,56 @@ limitations under the License.
     };
 
     //
-    // Star Line Mode MBCS
+    // Star SBCS
     //
-    const _linembcs = {
-        vrtable: {
-            ' '    : { ' ' : ' ',    '\x90' : '\x90', '\x95' : '\x95', '\x9a' : '\x9a', '\x9b' : '\x9b', '\x9e' : '\x9e', '\x9f' : '\x9f' },
-            '\x91' : { ' ' : '\x91', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x8f', '\x9e' : '\x8f', '\x9f' : '\x8f' },
-            '\x95' : { ' ' : '\x95', '\x90' : '\x90', '\x95' : '\x95', '\x9a' : '\x90', '\x9b' : '\x90', '\x9e' : '\x90', '\x9f' : '\x90' },
-            '\x98' : { ' ' : '\x98', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x93', '\x9b' : '\x8f', '\x9e' : '\x93', '\x9f' : '\x8f' },
-            '\x99' : { ' ' : '\x99', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x92', '\x9e' : '\x8f', '\x9f' : '\x92' },
-            '\x9c' : { ' ' : '\x9c', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x93', '\x9b' : '\x8f', '\x9e' : '\x93', '\x9f' : '\x8f' },
-            '\x9d' : { ' ' : '\x9d', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x92', '\x9e' : '\x8f', '\x9f' : '\x92' }
+    const _sbcs = {
+        // print horizontal rule: ESC GS t n ...
+        hr: width => '\x1b\x1dt\x01' + '\xc4'.repeat(width),
+        // print vertical rules: ESC i n1 n2 ESC GS t n ...
+        vr: function (widths, height) {
+            return widths.reduce((a, w) => a + this.relative(w) + '\xb3', '\x1bi' + $(height - 1, 0) + '\x1b\x1dt\x01\xb3');
         },
-        // start rules: ESC $ n ...
-        vrstart: function (widths, left, right) {
-            let r = widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', left ? '\x9c' : '\x98').slice(0, -1) + (right ? '\x9d' : '\x99');
-            const l = this.rules.length;
-            if (l > 0) {
-                const p = this.position;
-                r = r.split('').map((c, i) => this.vrtable[c][i + p < l ? this.rules[i + p] : ' ']).join('');
-            }
-            return '\x1b$0' + r;
+        // start rules: ESC GS t n ...
+        vrstart: widths => '\x1b\x1dt\x01' + widths.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc2', '\xda').slice(0, -1) + '\xbf',
+        // stop rules: ESC GS t n ...
+        vrstop: widths => '\x1b\x1dt\x01' + widths.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc1', '\xc0').slice(0, -1) + '\xd9',
+        // print vertical and horizontal rules: ESC GS t n ...
+        vrhr: function (widths1, widths2, dl, dr) {
+            const r1 = ' '.repeat(Math.max(-dl, 0)) + widths1.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc1', '\xc0').slice(0, -1) + '\xd9' + ' '.repeat(Math.max(dr, 0));
+            const r2 = ' '.repeat(Math.max(dl, 0)) + widths2.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc2', '\xda').slice(0, -1) + '\xbf' + ' '.repeat(Math.max(-dr, 0));
+            return '\x1b\x1dt\x01' + r2.split('').map((c, i) => this.vrtable[c][r1[i]]).join('');
         },
-        // stop rules: ESC $ n ...
-        vrstop: function (widths, left, right) {
-            const r = widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', left ? '\x9e' : '\x9a').slice(0, -1) + (right ? '\x9f' : '\x9b');
-            this.rules = ' '.repeat(this.position) + r;
-            return '\x1b$0' + r;
-        }
-    };
-
-    //
-    // Star Line Mode SBCS
-    //
-    const _linesbcs = {
+        // ruled line composition
         vrtable: {
             ' '    : { ' ' : ' ',    '\xc0' : '\xc0', '\xc1' : '\xc1', '\xc4' : '\xc4', '\xd9' : '\xd9' },
             '\xbf' : { ' ' : '\xbf', '\xc0' : '\xc5', '\xc1' : '\xc5', '\xc4' : '\xc2', '\xd9' : '\xb4' },
             '\xc2' : { ' ' : '\xc2', '\xc0' : '\xc5', '\xc1' : '\xc5', '\xc4' : '\xc2', '\xd9' : '\xc5' },
             '\xc4' : { ' ' : '\xc4', '\xc0' : '\xc1', '\xc1' : '\xc1', '\xc4' : '\xc4', '\xd9' : '\xc1' },
             '\xda' : { ' ' : '\xda', '\xc0' : '\xc3', '\xc1' : '\xc5', '\xc4' : '\xc2', '\xd9' : '\xc5' }
-        },
-        // start rules: ESC GS t n ...
-        vrstart: function (widths, left, right) {
-            let r = widths.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc2', '\xda').slice(0, -1) + '\xbf';
-            const l = this.rules.length;
-            if (l > 0) {
-                const p = this.position;
-                r = r.split('').map((c, i) => this.vrtable[c][i + p < l ? this.rules[i + p] : ' ']).join('');
-            }
-            return '\x1b\x1dt\x01' + r;
-        },
-        // stop rules: ESC GS t n ...
-        vrstop: function (widths, left, right) {
-            const r = widths.reduce((a, w) => a + '\xc4'.repeat(w) + '\xc1', '\xc0').slice(0, -1) + '\xd9';
-            this.rules = ' '.repeat(this.position) + r;
-            return '\x1b\x1dt\x01' + r;
         }
-    }
+    };
 
     //
-    // ESC/POS Impact
+    // Star MBCS Japanese
     //
-    const _impact = {
-        font: 0,
-        style: 0,
-        color: 0,
-        margin: 0,
-        position: 0,
-        rules: '',
-        red: [],
-        black: [],
-        // printer configuration
-        upsideDown: false,
-        spacing: false,
-        cutting: true,
-        gradient: true,
-        gamma: 1.8,
-        threshold: 0,
-        // start printing: ESC @ GS a n ESC M n (ESC 2) (ESC 3 n) ESC { n
-        open: function (printer) {
-            this.style = this.font;
-            this.color = 0;
-            this.margin = 0;
-            this.position = 0;
-            this.rules = '';
-            this.red = [];
-            this.black = [];
-            this.upsideDown = printer.upsideDown;
-            this.spacing = printer.spacing;
-            this.cutting = printer.cutting;
-            this.gradient = printer.gradient;
-            this.gamma = printer.gamma;
-            this.threshold = printer.threshold;
-            return '\x1b@\x1da\x00\x1bM' + $(this.font) + (this.spacing ? '\x1b2' : '\x1b3\x12') + '\x1b{' + $(this.upsideDown) + '\x1c.';
-        },
-        // finish printing: GS r n
-        close: function () {
-            return (this.cutting ? this.cut() : '') + '\x1dr1';
-        },
-        // set print area:
-        area: function (left, width, right) {
-            this.margin = left;
-            return '';
-        },
-        // set line alignment: ESC a n
-        align: align => '\x1ba' + $(align),
-        // set absolute print position:
-        absolute: function (position) {
-            this.position = position;
-            return '';
-        },
-        // set relative print position:
-        relative: function (position) {
-            this.position += Math.round(position);
-            return '';
-        },
-        // print horizontal rule: ESC t n ...
-        hr: function (width) {
-            this.rules = ' '.repeat(this.position) + '\x95'.repeat(width);
-            return '';
-        },
-        // print vertical rules: ESC ! n ESC t n ...
+    const _mbcs = {
+        // print horizontal rule: ESC $ n ...
+        hr: width => '\x1b$0' + '\x95'.repeat(width),
+        // print vertical rules: ESC i n1 n2 ESC $ n ...
         vr: function (widths, height) {
-            const d = '\x1b!' + $(this.font + (height > 1 ? 16 : 0)) + '\x1bt\x01\x96';
-            this.black.push({ data: d, index: this.position, length: 1 });
-            widths.forEach(w => {
-                this.position += w + 1;
-                this.black.push({ data: d, index: this.position, length: 1 });
-            });
-            return '';
+            return widths.reduce((a, w) => a + this.relative(w) + '\x96', '\x1bi' + $(height - 1, 0) + '\x1b$0\x96');
         },
+        // start rules: ESC $ n ...
+        vrstart: widths => '\x1b$0' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', '\x9c').slice(0, -1) + '\x9d',
+        // stop rules: ESC $ n ...
+        vrstop: widths => '\x1b$0' + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', '\x9e').slice(0, -1) + '\x9f',
+        // print vertical and horizontal rules: ESC $ n ...
+        vrhr: function (widths1, widths2, dl, dr) {
+            const r1 = ' '.repeat(Math.max(-dl, 0)) + widths1.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', dl > 0 ? '\x9e' : '\x9a').slice(0, -1) + (dr < 0 ? '\x9f' : '\x9b') + ' '.repeat(Math.max(dr, 0));
+            const r2 = ' '.repeat(Math.max(dl, 0)) + widths2.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', dl < 0 ? '\x9c' : '\x98').slice(0, -1) + (dr > 0 ? '\x9d' : '\x99') + ' '.repeat(Math.max(-dr, 0));
+            return '\x1b$0' + r2.split('').map((c, i) => this.vrtable[c][r1[i]]).join('');
+        },
+        // ruled line composition
         vrtable: {
             ' '    : { ' ' : ' ',    '\x90' : '\x90', '\x95' : '\x95', '\x9a' : '\x9a', '\x9b' : '\x9b', '\x9e' : '\x9e', '\x9f' : '\x9f' },
             '\x91' : { ' ' : '\x91', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x8f', '\x9e' : '\x8f', '\x9f' : '\x8f' },
@@ -2359,131 +2492,92 @@ limitations under the License.
             '\x99' : { ' ' : '\x99', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x92', '\x9e' : '\x8f', '\x9f' : '\x92' },
             '\x9c' : { ' ' : '\x9c', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x93', '\x9b' : '\x8f', '\x9e' : '\x93', '\x9f' : '\x8f' },
             '\x9d' : { ' ' : '\x9d', '\x90' : '\x8f', '\x95' : '\x91', '\x9a' : '\x8f', '\x9b' : '\x92', '\x9e' : '\x8f', '\x9f' : '\x92' }
+        }
+    };
+
+    //
+    // Star MBCS Chinese Korean
+    //
+    const _mbcs2 = {
+        // print horizontal rule: - ...
+        hr: width => '-'.repeat(width),
+        // print vertical rules: ESC i n1 n2 | ...
+        vr: function (widths, height) {
+            return widths.reduce((a, w) => a + this.relative(w) + '|', '\x1bi' + $(height - 1, 0) + '|');
         },
-        // start rules:
-        vrstart: function (widths, left, right) {
-            let r = ' '.repeat(this.position) + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x91', left ? '\x9c' : '\x98').slice(0, -1) + (right ? '\x9d' : '\x99');
-            const l = this.rules.length;
-            if (l > 0) {
-                if (r.length < l) {
-                    r += ' '.repeat(l - r.length);
-                }
-                this.rules = r.split('').map((c, i) => this.vrtable[c][i < l ? this.rules[i] : ' ']).join('');
-            }
-            else {
-                this.rules = r;
-            }
-            return '';
+        // start rules: + - ...
+        vrstart: widths => widths.reduce((a, w) => a + '-'.repeat(w) + '+', '+'),
+        // stop rules: + - ...
+        vrstop: widths => widths.reduce((a, w) => a + '-'.repeat(w) + '+', '+'),
+        // print vertical and horizontal rules: + - ...
+        vrhr: function (widths1, widths2, dl, dr) {
+            const r1 = ' '.repeat(Math.max(-dl, 0)) + widths1.reduce((a, w) => a + '-'.repeat(w) + '+', '+') + ' '.repeat(Math.max(dr, 0));
+            const r2 = ' '.repeat(Math.max(dl, 0)) + widths2.reduce((a, w) => a + '-'.repeat(w) + '+', '+') + ' '.repeat(Math.max(-dr, 0));
+            return r2.split('').map((c, i) => this.vrtable[c][r1[i]]).join('');
         },
-        // stop rules:
-        vrstop: function (widths, left, right) {
-            this.rules = ' '.repeat(this.position) + widths.reduce((a, w) => a + '\x95'.repeat(w) + '\x90', left ? '\x9e' : '\x9a').slice(0, -1) + (right ? '\x9f' : '\x9b');
-            return '';
+        // ruled line composition
+        vrtable: {
+            ' ' : { ' ' : ' ', '+' : '+', '-' : '-' },
+            '+' : { ' ' : '+', '+' : '+', '-' : '+' },
+            '-' : { ' ' : '-', '+' : '+', '-' : '-' }
+        }
+    };
+
+    //
+    // Star Graphic Mode
+    //
+    const _stargraphic = {
+        // printer configuration
+        upsideDown: false,
+        spacing: false,
+        cutting: true,
+        gradient: true,
+        gamma: 1.8,
+        threshold: 128,
+        // start printing: ESC RS a n ESC * r A ESC * r P n NUL (ESC * r E n NUL)
+        open: function (printer) {
+            this.upsideDown = printer.upsideDown;
+            this.spacing = printer.spacing;
+            this.cutting = printer.cutting;
+            this.gradient = printer.gradient;
+            this.gamma = printer.gamma;
+            this.threshold = printer.threshold;
+            return '\x1b\x1ea\x00\x1b*rA\x1b*rP0\x00' + (this.cutting ? '' : '\x1b*rE1\x00');
         },
-        // set line spacing and feed new line: (ESC 2) (ESC 3 n)
-        vrlf: function (vr) {
-            return (vr === this.upsideDown && this.spacing ? '\x1b2' : '\x1b3\x12') + this.lf();
+        // finish printing: ESC * r B ESC ACK SOH
+        close: function () {
+            return '\x1b*rB\x1b\x06\x01';
         },
-        // cut paper: GS V m n
-        cut: () => '\x1dVB\x00',
-        // underline text:
-        ul: function () {
-            this.style += 128;
-            return '';
-        },
-        // emphasize text:
-        em: function () {
-            this.style += 8;
-            return '';
-        },
-        // invert text:
-        iv: function () {
-            this.color = 1;
-            return '';
-        },
-        // scale up text:
-        wh: function (wh) {
-            if (wh > 0) {
-                this.style += wh < 3 ? 64 >> wh : 48;
-            }
-            return '';
-        },
-        // cancel text decoration:
-        normal: function () {
-            this.style = this.font;
-            this.color = 0;
-            return '';
-        },
-        // print text:
-        text: function (text, encoding) {
-            const t = iconv.encode(text, encoding).toString('binary');
-            const d = '\x1b!' + $(this.style) + this.codepage[encoding] + t;
-            const l = t.length * (this.style & 32 ? 2 : 1);
-            if (this.color > 0) {
-                this.red.push({ data: d, index: this.position, length: l });
-            }
-            else {
-                this.black.push({ data: d, index: this.position, length: l });
-            }
-            this.position += l;
-            return '';
-        },
-        // codepages: (ESC t n) (ESC R n)
-        codepage: {
-            cp437: '\x1bt\x00', cp852: '\x1bt\x12', cp858: '\x1bt\x13', cp860: '\x1bt\x03',
-            cp863: '\x1bt\x04', cp865: '\x1bt\x05', cp866: '\x1bt\x11', cp1252: '\x1bt\x10',
-            cp932: '\x1bt\x01\x1bR\x08'
-        },
-        // feed new line: LF
+        // cut paper: ESC FF NUL
+        cut: () => '\x1b\x0c\x00',
+        // feed new line: ESC * r Y n NUL
         lf: function () {
-            let r = '';
-            if (this.rules.length > 0) {
-                r += '\x1b!' + $(this.font) + ' '.repeat(this.margin) + '\x1bt\x01' + this.rules;
-            }
-            if (this.red.length > 0) {
-                let p = 0;
-                r += this.red.sort((a, b) => a.index - b.index).reduce((a, c) => {
-                    const s = a + '\x1b!' + $(this.font) + ' '.repeat(c.index - p) + c.data;
-                    p = c.index + c.length;
-                    return s;
-                }, '\x1br\x01\x1b!' + $(this.font) + ' '.repeat(this.margin)) + '\x0d\x1br\x00';
-            }
-            if (this.black.length > 0) {
-                let p = 0;
-                r += this.black.sort((a, b) => a.index - b.index).reduce((a, c) => {
-                    const s = a + '\x1b!' + $(this.font) + ' '.repeat(c.index - p) + c.data;
-                    p = c.index + c.length;
-                    return s;
-                }, '\x1b!' + $(this.font) + ' '.repeat(this.margin));
-            }
-            r += '\x0a';
-            this.position = 0;
-            this.rules = '';
-            this.red = [];
-            this.black = [];
-            return r;
+            return '\x1b*rY' + this.charWidth * (this.spacing ? 2.5 : 2) + '\x00';
         },
         // insert commands:
         command: command => command,
-        // print image: ESC * 0 wL wH d1 ... dk ESC J n
+        // print image: b n1 n2 data
         image: function (image, align, left, width, right) {
-            let r = this.align(align);
+            let r = '';
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
-            if (w < 1024) {
-                const d = Array(w).fill(0);
-                let j = this.upsideDown ? img.data.length - 4 : 0;
-                for (let y = 0; y < img.height; y += 8) {
-                    const b = Array(w).fill(0);
-                    const h = Math.min(8, img.height - y);
-                    for (let p = 0; p < h; p++) {
-                        let i = 0, e = 0;
-                        for (let x = 0; x < w; x++) {
+            const d = Array(w).fill(0);
+            const m = Math.max((this.upsideDown ? right : left) * this.charWidth + (width * this.charWidth - w) * (this.upsideDown ? 2 - align: align) >> 1, 0);
+            const l = m + w + 7 >> 3;
+            let j = this.upsideDown ? img.data.length - 4 : 0;
+            for (let y = 0; y < img.height; y++) {
+                let i = 0, e = 0;
+                r += 'b' + $(l & 255, l >> 8 & 255);
+                for (let x = 0; x < m + w; x += 8) {
+                    let b = 0;
+                    const q = Math.min(m + w - x, 8);
+                    for (let p = 0; p < q; p++) {
+                        if (m <= x + p) {
                             const f = Math.floor((d[i] + e * 5) / 16 + Math.pow(((img.data[j] * .299 + img.data[j + 1] * .587 + img.data[j + 2] * .114 - 255) * img.data[j + 3] + 65525) / 65525, 1 / this.gamma) * 255);
                             j += this.upsideDown ? -4 : 4;
                             if (this.gradient) {
                                 d[i] = e * 3;
-                                e = f < this.threshold ? (this.upsideDown ? b[w - x - 1] |= 1 << p : b[x] |= 128 >> p, f) : f - 255;
+                                e = f < this.threshold ? (b |= 128 >> p, f) : f - 255;
                                 if (i > 0) {
                                     d[i - 1] += e;
                                 }
@@ -2491,37 +2585,34 @@ limitations under the License.
                             }
                             else {
                                 if (f < this.threshold) {
-                                    this.upsideDown ? b[w - x - 1] |= 1 << p : b[x] |= 128 >> p;
+                                    b |= 128 >> p;
                                 }
                             }
                         }
                     }
-                    r += '\x1b*\x00' + $(w & 255, w >> 8 & 255) + b.map(c => $(c)).join('') + '\x1bJ' + $(h * 2);
+                    r += $(b);
                 }
             }
             return r;
         }
     };
 
-    //
-    // ESC/POS Impact Font B
-    //
-    const _impactb = {
-        font: 1
-    };
-
     // command set
     const commands = {
         svg: Object.assign(Object.create(_base), _svg),
-        escpos: Object.assign(Object.create(_base), _escpos),
-        sii: Object.assign(Object.create(_base), _escpos, _sii),
-        fit: Object.assign(Object.create(_base), _escpos, _fit),
-        starmbcs: Object.assign(Object.create(_base), _star, _mbcs),
+        escpos: Object.assign(Object.create(_base), _escpos, _thermal),
+        sii: Object.assign(Object.create(_base), _escpos, _thermal, _sii),
+        citizen: Object.assign(Object.create(_base), _escpos, _thermal, _citizen),
+        fit: Object.assign(Object.create(_base), _escpos, _thermal, _fit),
+        impact: Object.assign(Object.create(_base), _escpos, _impact),
+        impactb: Object.assign(Object.create(_base), _escpos, _impact, _fontb),
         starsbcs: Object.assign(Object.create(_base), _star, _sbcs),
-        starlinembcs: Object.assign(Object.create(_base), _star, _mbcs, _line, _linembcs),
-        starlinesbcs: Object.assign(Object.create(_base), _star, _sbcs, _line, _linesbcs),
-        impact: Object.assign(Object.create(_base), _impact),
-        impactb: Object.assign(Object.create(_base), _impact, _impactb)
+        starmbcs: Object.assign(Object.create(_base), _star, _mbcs),
+        starmbcs2: Object.assign(Object.create(_base), _star, _mbcs2),
+        starlinesbcs: Object.assign(Object.create(_base), _star, _line, _sbcs),
+        starlinembcs: Object.assign(Object.create(_base), _star, _line, _mbcs),
+        starlinembcs2: Object.assign(Object.create(_base), _star, _line, _mbcs2),
+        stargraphic: Object.assign(Object.create(_base), _stargraphic)
     };
 
     // web browser
