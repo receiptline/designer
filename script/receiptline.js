@@ -1333,7 +1333,7 @@ limitations under the License.
         },
         // print QR Code:
         qrcode: function (symbol, encoding) {
-            if (typeof qrcode !== 'undefined') {
+            if (typeof qrcode !== 'undefined' && symbol.data.length > 0) {
                 const qr = qrcode(0, symbol.level.toUpperCase());
                 qr.addData(symbol.data);
                 qr.make();
@@ -1450,7 +1450,7 @@ limitations under the License.
                 d.push(x);
             }
             s = s.replace(/^((?!\d{4,})[\x00-_])+/, m => (m.split('').forEach(c => d.push((c.charCodeAt(0) + 64) % 96)), ''));
-            s = s.replace(/^\d(?=\d{4}(\d{2})*)/, m => (d.push((m.charCodeAt(0) + 64) % 96), ''));
+            s = s.replace(/^\d(?=(\d\d){2,}(\D|$))/, m => (d.push((m.charCodeAt(0) + 64) % 96), ''));
             const t = s.slice(1);
             const p = t.search(/[^ -_]/);
             if (/^\d{4,}/.test(s)) {
@@ -1473,7 +1473,7 @@ limitations under the License.
                 d.push(x);
             }
             s = s.replace(/^((?!\d{4,})[ -\x7f])+/, m => (m.split('').forEach(c => d.push(c.charCodeAt(0) - 32)), ''));
-            s = s.replace(/^\d(?=\d{4}(\d{2})*)/, m => (d.push(m.charCodeAt(0) - 32), ''));
+            s = s.replace(/^\d(?=(\d\d){2,}(\D|$))/, m => (d.push(m.charCodeAt(0) - 32), ''));
             const t = s.slice(1);
             const p = t.search(/[^ -_]/);
             if (/^\d{4,}/.test(s)) {
@@ -1917,7 +1917,7 @@ limitations under the License.
         // print QR Code: GS ( k pL pH cn fn n1 n2 GS ( k pL pH cn fn n GS ( k pL pH cn fn n GS ( k pL pH cn fn m d1 ... dk GS ( k pL pH cn fn m
         qrcode: function (symbol, encoding) {
             const d = iconv.encode(symbol.data, encoding === 'multilingual' ? 'ascii' : encoding).toString('binary').slice(0, 7089);
-            return '\x1d(k' + $(4, 0, 49, 65, 50, 0) + '\x1d(k' + $(3, 0, 49, 67, symbol.cell) + '\x1d(k' + $(3, 0, 49, 69, this.qrlevel[symbol.level]) + '\x1d(k' + $(d.length + 3 & 255, d.length + 3 >> 8 & 255, 49, 80, 48) + d + '\x1d(k' + $(3, 0, 49, 81, 48);
+            return d.length > 0 ? '\x1d(k' + $(4, 0, 49, 65, 50, 0) + '\x1d(k' + $(3, 0, 49, 67, symbol.cell) + '\x1d(k' + $(3, 0, 49, 69, this.qrlevel[symbol.level]) + '\x1d(k' + $(d.length + 3 & 255, d.length + 3 >> 8 & 255, 49, 80, 48) + d + '\x1d(k' + $(3, 0, 49, 81, 48) : '';
         },
         // QR Code error correction level:
         qrlevel: {
@@ -1938,7 +1938,7 @@ limitations under the License.
                     break;
             }
             d = d.slice(0, 255);
-            return '\x1dw' + $(symbol.width) + '\x1dh' + $(symbol.height) + '\x1dH' + $(symbol.hri ? 2 : 0) + '\x1dk' + $(b, d.length) + d;
+            return d.length > 0 ? '\x1dw' + $(symbol.width) + '\x1dh' + $(symbol.height) + '\x1dH' + $(symbol.hri ? 2 : 0) + '\x1dk' + $(b, d.length) + d : '';
         },
         // barcode types:
         bartype: {
@@ -2003,7 +2003,7 @@ limitations under the License.
                 d.push(this.c128.special, x);
             }
             s = s.replace(/^((?!\d{4,})[\x00-_])+/, m => (m.split('').forEach(c => d.push(c.charCodeAt(0))), ''));
-            s = s.replace(/^\d(?=\d{4}(\d{2})*)/, m => (d.push(m.charCodeAt(0)), ''));
+            s = s.replace(/^\d(?=(\d\d){2,}(\D|$))/, m => (d.push(m.charCodeAt(0)), ''));
             const t = s.slice(1);
             const p = t.search(/[^ -_]/);
             if (/^\d{4,}/.test(s)) {
@@ -2026,7 +2026,7 @@ limitations under the License.
                 d.push(this.c128.special, x);
             }
             s = s.replace(/^((?!\d{4,})[ -\x7f])+/, m => (m.split('').forEach(c => d.push(c.charCodeAt(0))), ''));
-            s = s.replace(/^\d(?=\d{4}(\d{2})*)/, m => (d.push(m.charCodeAt(0)), ''));
+            s = s.replace(/^\d(?=(\d\d){2,}(\D|$))/, m => (d.push(m.charCodeAt(0)), ''));
             const t = s.slice(1);
             const p = t.search(/[^ -_]/);
             if (/^\d{4,}/.test(s)) {
@@ -2091,7 +2091,7 @@ limitations under the License.
         // print QR Code: DC2 ; n GS p 1 model e v mode nl nh dk
         qrcode: function (symbol, encoding) {
             const d = iconv.encode(symbol.data, encoding === 'multilingual' ? 'ascii' : encoding).toString('binary').slice(0, 7089);
-            return '\x12;' + $(symbol.cell) + '\x1dp' + $(1, 2, this.qrlevel[symbol.level], 0, 77, d.length & 255, d.length >> 8 & 255) + d;
+            return d.length > 0 ? '\x12;' + $(symbol.cell) + '\x1dp' + $(1, 2, this.qrlevel[symbol.level], 0, 77, d.length & 255, d.length >> 8 & 255) + d : '';
         },
         // QR Code error correction levels:
         qrlevel: {
@@ -2118,7 +2118,7 @@ limitations under the License.
                     break;
             }
             d = d.slice(0, 255);
-            return '\x1dw' + $(symbol.width) + '\x1dh' + $(symbol.height) + '\x1dH' + $(symbol.hri ? 2 : 0) + '\x1dk' + $(b, d.length) + d;
+            return d.length > 0 ? '\x1dw' + $(symbol.width) + '\x1dh' + $(symbol.height) + '\x1dH' + $(symbol.hri ? 2 : 0) + '\x1dk' + $(b, d.length) + d : '';
         },
         // generate Codabar data:
         codabar: data => data.toUpperCase(),
@@ -2176,7 +2176,7 @@ limitations under the License.
                 d.push(x);
             }
             s = s.replace(/^((?!\d{4,})[\x00-_])+/, m => (m.split('').forEach(c => d.push((c.charCodeAt(0) + 64) % 96)), ''));
-            s = s.replace(/^\d(?=\d{4}(\d{2})*)/, m => (d.push((m.charCodeAt(0) + 64) % 96), ''));
+            s = s.replace(/^\d(?=(\d\d){2,}(\D|$))/, m => (d.push((m.charCodeAt(0) + 64) % 96), ''));
             const t = s.slice(1);
             const p = t.search(/[^ -_]/);
             if (/^\d{4,}/.test(s)) {
@@ -2199,7 +2199,7 @@ limitations under the License.
                 d.push(x);
             }
             s = s.replace(/^((?!\d{4,})[ -\x7f])+/, m => (m.split('').forEach(c => d.push(c.charCodeAt(0) - 32)), ''));
-            s = s.replace(/^\d(?=\d{4}(\d{2})*)/, m => (d.push(m.charCodeAt(0) - 32), ''));
+            s = s.replace(/^\d(?=(\d\d){2,}(\D|$))/, m => (d.push(m.charCodeAt(0) - 32), ''));
             const t = s.slice(1);
             const p = t.search(/[^ -_]/);
             if (/^\d{4,}/.test(s)) {
@@ -2632,7 +2632,7 @@ limitations under the License.
         // print QR Code: ESC GS y S 0 n ESC GS y S 1 n ESC GS y S 2 n ESC GS y D 1 m nL nH d1 d2 ... dk ESC GS y P
         qrcode: function (symbol, encoding) {
             const d = iconv.encode(symbol.data, encoding === 'multilingual' ? 'ascii' : encoding).toString('binary').slice(0, 7089);
-            return '\x1b\x1dyS0' + $(2) + '\x1b\x1dyS1' + $(this.qrlevel[symbol.level]) + '\x1b\x1dyS2' + $(symbol.cell) + '\x1b\x1dyD1' + $(0, d.length & 255, d.length >> 8 & 255) + d + '\x1b\x1dyP';
+            return d.length > 0 ? '\x1b\x1dyS0' + $(2) + '\x1b\x1dyS1' + $(this.qrlevel[symbol.level]) + '\x1b\x1dyS2' + $(symbol.cell) + '\x1b\x1dyD1' + $(0, d.length & 255, d.length >> 8 & 255) + d + '\x1b\x1dyP' : '';
         },
         // QR Code error correction levels:
         qrlevel: {
@@ -2652,7 +2652,7 @@ limitations under the License.
                 default:
                     break;
             }
-            return '\x1bb' + $(b, symbol.hri ? 50 : 49, symbol.width + 47, symbol.height) + d + '\x1e';
+            return d.length > 0 ? '\x1bb' + $(b, symbol.hri ? 50 : 49, symbol.width + 47, symbol.height) + d + '\x1e' : '';
         },
         // barcode types:
         bartype: {
