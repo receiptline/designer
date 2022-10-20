@@ -621,7 +621,9 @@ limitations under the License.
         if ('image' in column) {
             // append commands to print image
             result.push(printer.command.normal() +
-                printer.command.image(column.image, column.align, left, width, right));
+                printer.command.area(left, width, right) +
+                printer.command.align(column.align) +
+                printer.command.image(column.image));
         }
         // process barcode or 2D code
         if ('code' in column) {
@@ -1076,13 +1078,9 @@ limitations under the License.
         /**
          * Print image.
          * @param {string} image image data (base64 png format)
-         * @param {number} align line alignment (0: left, 1: center, 2: right)
-         * @param {number} left left margin (unit: characters)
-         * @param {number} width print area (unit: characters)
-         * @param {number} right right margin (unit: characters)
          * @returns {string} commands
          */
-        image: (image, align, left, width, right) => '',
+        image: image => '',
 
         /**
          * Print QR Code.
@@ -1314,7 +1312,7 @@ limitations under the License.
         // insert commands:
         command: command => '',
         // print image:
-        image: function (image, align, left, width, right) {
+        image: function (image) {
             const png = typeof window !== 'undefined' ? window.atob(image) : Buffer.from(image, 'base64').toString('binary');
             let imgWidth = 0;
             let imgHeight = 0;
@@ -1324,8 +1322,6 @@ limitations under the License.
                 return '';
             });
             const imgData = `<image xlink:href="data:image/png;base64,${image}" x="0" y="0" width="${imgWidth}" height="${imgHeight}"/>`;
-            this.align(align);
-            this.area(left, width, right);
             const margin = this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - imgWidth) * this.lineAlign / 2;
             this.svgContent += `<g transform="translate(${margin},${this.svgHeight})">${imgData}</g>`;
             this.svgHeight += imgHeight;
@@ -1347,47 +1343,14 @@ limitations under the License.
         },
         // print barcode:
         barcode: function (symbol, encoding) {
-            let bar = {};
-            const data = symbol.data;
-            const h = symbol.height;
-            let x = symbol.width;
-            switch (symbol.type) {
-                case 'upc':
-                    bar = data.length < 9 ? this.upce(data) : this.upca(data);
-                    break;
-                case 'ean':
-                case 'jan':
-                    bar = data.length < 9 ? this.ean8(data) : this.ean13(data);
-                    break;
-                case 'code39':
-                    bar = this.code39(data);
-                    x = Math.floor((x + 1) / 2);
-                    break;
-                case 'itf':
-                    bar = this.itf(data);
-                    x = Math.floor((x + 1) / 2);
-                    break;
-                case 'codabar':
-                case 'nw7':
-                    bar = this.codabar(data);
-                    x = Math.floor((x + 1) / 2);
-                    break;
-                case 'code93':
-                    bar = this.code93(data);
-                    break;
-                case 'code128':
-                    bar = this.code128(data);
-                    break;
-                default:
-                    break;
-            }
-            if ('module' in bar) {
-                const width = x * bar.length;
-                const height = h + (symbol.hri ? this.charWidth * 2 + 2 : 0);
+            const bar = barcode.generate(symbol);
+            const h = bar.height;
+            if ('length' in bar) {
+                const width = bar.length;
+                const height = h + (bar.hri ? this.charWidth * 2 + 2 : 0);
                 // draw barcode
                 let path = `<path d="`;
-                bar.module.split('').reduce((p, c, i) => {
-                    const w = x * parseInt(c, 16);
+                bar.widths.reduce((p, w, i) => {
                     if (i % 2 === 1) {
                         path += `M${p},${0}h${w}v${h}h${-w}z`;
                     }
@@ -1395,9 +1358,9 @@ limitations under the License.
                 }, 0);
                 path += '" fill="#000"/>';
                 // draw human readable interpretation
-                if (symbol.hri) {
-                    const m = (width - (bar.hri.length - 1) * this.charWidth) / 2;
-                    const tspan = bar.hri.split('').reduce((a, c, i) => a + `<tspan x="${m + this.charWidth * i}">${c.replace(/[ &<>]/g, r => ({' ': '&#xa0;', '&': '&amp;', '<': '&lt;', '>': '&gt;'}[r]))}</tspan>`, '');
+                if (bar.hri) {
+                    const m = (width - (bar.text.length - 1) * this.charWidth) / 2;
+                    const tspan = bar.text.split('').reduce((a, c, i) => a + `<tspan x="${m + this.charWidth * i}">${c.replace(/[ &<>]/g, r => ({' ': '&#xa0;', '&': '&amp;', '<': '&lt;', '>': '&gt;'}[r]))}</tspan>`, '');
                     path += `<text y="${height}">${tspan}</text>`;
                 }
                 const margin = this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - width) * this.lineAlign / 2;
@@ -1405,6 +1368,48 @@ limitations under the License.
                 this.svgHeight += height;
             }
             return '';
+        }
+    };
+
+    //
+    // Barcode Generator
+    //
+    const barcode = {
+        /**
+         * Generate barcode.
+         * @param {object} symbol barcode information (data, type, width, height, hri, quietZone)
+         * @returns {object} barcode form
+         */
+        generate: function (symbol) {
+            let r = {};
+            switch (symbol.type) {
+                case 'upc':
+                    r = symbol.data.length < 9 ? this.upce(symbol) : this.upca(symbol);
+                    break;
+                case 'ean':
+                case 'jan':
+                    r = symbol.data.length < 9 ? this.ean8(symbol) : this.ean13(symbol);
+                    break;
+                case 'code39':
+                    r = this.code39(symbol);
+                    break;
+                case 'itf':
+                    r = this.itf(symbol);
+                    break;
+                case 'codabar':
+                case 'nw7':
+                    r = this.codabar(symbol);
+                    break;
+                case 'code93':
+                    r = this.code93(symbol);
+                    break;
+                case 'code128':
+                    r = this.code128(symbol);
+                    break;
+                default:
+                    break;
+            }
+            return r;
         },
         // CODE128 patterns:
         c128: {
@@ -1412,12 +1417,13 @@ limitations under the License.
             starta: 103, startb: 104, startc: 105, atob: 100, atoc: 99, btoa: 101, btoc: 99, ctoa: 101, ctob: 100, shift: 98, stop: 106
         },
         // generate CODE128 data (minimize symbol width):
-        code128: function (data) {
+        code128: function (symbol) {
             const r = {};
-            let s = data.replace(/((?!^[\x00-\x7f]+$).)*/, '');
+            let s = symbol.data.replace(/((?!^[\x00-\x7f]+$).)*/, '');
             if (s.length > 0) {
                 // generate HRI
-                r.hri = s.replace(/[\x00- \x7f]/g, ' ');
+                r.hri = symbol.hri;
+                r.text = s.replace(/[\x00- \x7f]/g, ' ');
                 // minimize symbol width
                 const d = [];
                 const p = s.search(/[^ -_]/);
@@ -1438,9 +1444,12 @@ limitations under the License.
                 }
                 // calculate check digit and append stop character
                 d.push(d.reduce((a, c, i) => a + c * i) % 103, this.c128.stop);
-                // generate modules
-                r.module = '0' + d.reduce((a, c) => a + this.c128.element[c], '');
-                r.length = d.length * 11 + 2;
+                // generate bars and spaces
+                const q = symbol.quietZone ? 'a' : '0';
+                const m = d.reduce((a, c) => a + this.c128.element[c], q) + q;
+                r.widths = m.split('').map(c => parseInt(c, 16) * symbol.width);
+                r.length = symbol.width * (d.length * 11 + (symbol.quietZone ? 22 : 2));
+                r.height = symbol.height;
             }
             return r;
         },
@@ -1515,12 +1524,13 @@ limitations under the License.
             start: 47, stop: 48
         },
         // generate CODE93 data:
-        code93: function (data) {
+        code93: function (symbol) {
             const r = {};
-            let s = data.replace(/((?!^[\x00-\x7f]+$).)*/, '');
+            let s = symbol.data.replace(/((?!^[\x00-\x7f]+$).)*/, '');
             if (s.length > 0) {
                 // generate HRI
-                r.hri = s.replace(/[\x00- \x7f]/g, ' ');
+                r.hri = symbol.hri;
+                r.text = s.replace(/[\x00- \x7f]/g, ' ');
                 // calculate check digit
                 const d = s.split('').reduce((a, c) => a + this.c93.escape[c.charCodeAt(0)], '').split('').map(c => this.c93.code[c]);
                 d.push(d.reduceRight((a, c, i) => a + c * ((d.length - 1 - i) % 20 + 1)) % 47);
@@ -1528,9 +1538,12 @@ limitations under the License.
                 // append start character and stop character
                 d.unshift(this.c93.start);
                 d.push(this.c93.stop);
-                // generate modules
-                r.module = '0' + d.reduce((a, c) => a + this.c93.element[c], '');
-                r.length = d.length * 9 + 1;
+                // generate bars and spaces
+                const q = symbol.quietZone ? 'a' : '0';
+                const m = d.reduce((a, c) => a + this.c93.element[c], q) + q;
+                r.widths = m.split('').map(c => parseInt(c, 16) * symbol.width);
+                r.length = symbol.width * (d.length * 9 + (symbol.quietZone ? 21 : 1));
+                r.height = symbol.height;
             }
             return r;
         },
@@ -1542,15 +1555,20 @@ limitations under the License.
             '+': '2252525', 'A': '2255252', 'B': '2525225', 'C': '2225255', 'D': '2225552'
         },
         // generate Codabar(NW-7) data:
-        codabar: function (data) {
+        codabar: function (symbol) {
             const r = {};
-            let s = data.replace(/((?!^[A-D][0-9\-$:/.+]+[A-D]$).)*/i, '');
+            let s = symbol.data.replace(/((?!^[A-D][0-9\-$:/.+]+[A-D]$).)*/i, '');
             if (s.length > 0) {
                 // generate HRI
-                r.hri = s;
-                // generate modules
-                r.module = '0' + s.toUpperCase().split('').reduce((a, c) => a + this.nw7[c] + '2', '').slice(0, -1);
-                r.length = s.length * 25 - (s.match(/[\d\-$]/g) || []).length * 3 - 2;
+                r.hri = symbol.hri;
+                r.text = s;
+                // generate bars and spaces
+                const q = symbol.quietZone ? 'a' : '0';
+                const m = s.toUpperCase().split('').reduce((a, c) => a + this.nw7[c] + '2', q).slice(0, -1) + q;
+                r.widths = m.split('').map(c => parseInt(c, 16) * symbol.width + 1 >> 1);
+                const w = [ 25, 39, 50, 3, 5, 6 ];
+                r.length = s.length * w[symbol.width - 2] - (s.match(/[\d\-$]/g) || []).length * w[symbol.width + 1] + symbol.width * (symbol.quietZone ? 19 : -1);
+                r.height = symbol.height;
             }
             return r;
         },
@@ -1560,24 +1578,28 @@ limitations under the License.
             start: '2222', stop: '522'
         },
         // generate Interleaved 2 of 5 data:
-        itf: function (data) {
+        itf: function (symbol) {
             const r = {};
-            let s = data.replace(/((?!^(\d{2})+$).)*/, '');
+            let s = symbol.data.replace(/((?!^(\d{2})+$).)*/, '');
             if (s.length > 0) {
                 // generate HRI
-                r.hri = s;
-                // generate modules
-                const d = data.replace(/((?!^(\d{2})+$).)*/, '', '').split('').map(c => Number(c));
-                let x = this.i25.start;
+                r.hri = symbol.hri;
+                r.text = s;
+                // generate bars and spaces
+                const d = symbol.data.replace(/((?!^(\d{2})+$).)*/, '', '').split('').map(c => Number(c));
+                const q = symbol.quietZone ? 'a' : '0';
+                let m = q + this.i25.start;
                 let i = 0;
                 while (i < d.length) {
                     const b = this.i25.element[d[i++]];
                     const s = this.i25.element[d[i++]];
-                    x += b.split('').reduce((a, c, j) => a + c + s[j], '');
+                    m += b.split('').reduce((a, c, j) => a + c + s[j], '');
                 }
-                x += this.i25.stop;
-                r.module = '0' + x;
-                r.length = s.length * 16 + 17;
+                m += this.i25.stop + q;
+                r.widths = m.split('').map(c => parseInt(c, 16) * symbol.width + 1 >> 1);
+                const w = [ 16, 25, 32, 17, 26, 34 ];
+                r.length = s.length * w[symbol.width - 2] + w[symbol.width + 1] + symbol.width * (symbol.quietZone ? 20 : 0);
+                r.height = symbol.height;
             }
             return r;
         },
@@ -1594,17 +1616,22 @@ limitations under the License.
             '/': '252522252', '+': '252225252', '%': '222525252', '*': '252252522'
         },
         // generate CODE39 data:
-        code39: function (data) {
+        code39: function (symbol) {
             const r = {};
-            let s = data.replace(/((?!^\*?[0-9A-Z\-. $/+%]+\*?$).)*/, '');
+            let s = symbol.data.replace(/((?!^\*?[0-9A-Z\-. $/+%]+\*?$).)*/, '');
             if (s.length > 0) {
                 // append start character and stop character
                 s = s.replace(/^\*?([^*]+)\*?$/, '*$1*');
                 // generate HRI
-                r.hri = s;
-                // generate modules
-                r.module = '0' + s.split('').reduce((a, c) => a + this.c39[c] + '2', '').slice(0, -1);
-                r.length = s.length * 29 - 2;
+                r.hri = symbol.hri;
+                r.text = s;
+                // generate bars and spaces
+                const q = symbol.quietZone ? 'a' : '0';
+                const m = s.split('').reduce((a, c) => a + this.c39[c] + '2', q).slice(0, -1) + q;
+                r.widths = m.split('').map(c => parseInt(c, 16) * symbol.width + 1 >> 1);
+                const w = [ 29, 45, 58 ];
+                r.length = s.length * w[symbol.width - 2] + symbol.width * (symbol.quietZone ? 19 : -1);
+                r.height = symbol.height;
             }
             return r;
         },
@@ -1618,29 +1645,34 @@ limitations under the License.
             e: 'bbbaaa,bbabaa,bbaaba,bbaaab,babbaa,baabba,baaabb,bababa,babaab,baabab'.split(',')
         },
         // generate UPC-A data:
-        upca: function (data) {
-            const r = this.ean13('0' + data);
-            if ('module' in r) {
-                r.hri = r.hri.slice(1);
+        upca: function (symbol) {
+            const s = Object.assign({}, symbol);
+            s.data = '0' + symbol.data;
+            const r = this.ean13(s);
+            if ('text' in r) {
+                r.text = r.text.slice(1);
             }
             return r;
         },
         // generate UPC-E data:
-        upce: function (data) {
+        upce: function (symbol) {
             const r = {};
-            const d = data.replace(/((?!^0\d{6,7}$).)*/, '').split('').map(c => Number(c));
+            const d = symbol.data.replace(/((?!^0\d{6,7}$).)*/, '').split('').map(c => Number(c));
             if (d.length > 0) {
                 // calculate check digit
                 d[7] = 0;
                 d[7] = (10 - this.upcetoa(d).reduce((a, c, i) => a + c * (3 - (i % 2) * 2), 0) % 10) % 10;
                 // generate HRI
-                r.hri = d.join('');
-                // generate modules
-                let m = this.ean.g[0];
+                r.hri = symbol.hri;
+                r.text = d.join('');
+                // generate bars and spaces
+                const q = symbol.quietZone ? '7' : '0';
+                let m = q + this.ean.g[0];
                 for (let i = 1; i < 7; i++) m += this.ean[this.ean.e[d[7]][i - 1]][d[i]];
-                m += this.ean.g[2];
-                r.module = '0' + m;
-                r.length = 51;
+                m += this.ean.g[2] + q;
+                r.widths = m.split('').map(c => parseInt(c, 16) * symbol.width);
+                r.length = symbol.width * (symbol.quietZone ? 65 : 51);
+                r.height = symbol.height;
             }
             return r;
         },
@@ -1665,44 +1697,49 @@ limitations under the License.
             return a;
         },
         // generate EAN-13(JAN-13) data:
-        ean13: function (data) {
+        ean13: function (symbol) {
             const r = {};
-            const d = data.replace(/((?!^\d{12,13}$).)*/, '').split('').map(c => Number(c));
+            const d = symbol.data.replace(/((?!^\d{12,13}$).)*/, '').split('').map(c => Number(c));
             if (d.length > 0) {
                 // calculate check digit
                 d[12] = 0;
                 d[12] = (10 - d.reduce((a, c, i) => a + c * ((i % 2) * 2 + 1)) % 10) % 10;
                 // generate HRI
-                r.hri = d.join('');
-                // generate modules
-                let m = this.ean.g[0];
+                r.hri = symbol.hri;
+                r.text = d.join('');
+                // generate bars and spaces
+                let m = (symbol.quietZone ? 'b' : '0') + this.ean.g[0];
                 for (let i = 1; i < 7; i++) m += this.ean[this.ean.p[d[0]][i - 1]][d[i]];
                 m += this.ean.g[1];
                 for (let i = 7; i < 13; i++) m += this.ean.c[d[i]];
-                m += this.ean.g[0];
-                r.module = '0' + m;
-                r.length = 95;
+                m += this.ean.g[0] + (symbol.quietZone ? '7' : '0');
+                r.widths = m.split('').map(c => parseInt(c, 16) * symbol.width);
+                r.length = symbol.width * (symbol.quietZone ? 113 : 95);
+                r.height = symbol.height;
             }
             return r;
         },
         // generate EAN-8(JAN-8) data:
-        ean8: function (data) {
+        ean8: function (symbol) {
             const r = {};
-            const d = data.replace(/((?!^\d{7,8}$).)*/, '').split('').map(c => Number(c));
+            const d = symbol.data.replace(/((?!^\d{7,8}$).)*/, '').split('').map(c => Number(c));
             if (d.length > 0) {
                 // calculate check digit
                 d[7] = 0;
                 d[7] = (10 - d.reduce((a, c, i) => a + c * (3 - (i % 2) * 2), 0) % 10) % 10;
                 // generate HRI
-                r.hri = d.join('');
-                // generate modules
-                let m = this.ean.g[0];
+                r.hri = symbol.hri;
+                r.text = d.join('');
+                // generate bars and spaces
+                const q = symbol.quietZone ? '7' : '0';
+                let m = q + this.ean.g[0];
                 for (let i = 0; i < 4; i++) m += this.ean.a[d[i]];
                 m += this.ean.g[1];
                 for (let i = 4; i < 8; i++) m += this.ean.c[d[i]];
-                m += this.ean.g[0];
-                r.module = '0' + m;
-                r.length = 67;
+                m += this.ean.g[0] + q;
+                r.widths = m.split('').map(c => parseInt(c, 16) * symbol.width);
+                r.length = symbol.width * (symbol.quietZone ? 81 : 67);
+                r.height = symbol.height;
             }
             return r;
         }
@@ -1889,8 +1926,12 @@ limitations under the License.
         // image split size
         split: 512,
         // print image: GS 8 L p1 p2 p3 p4 m fn a bx by c xL xH yL yH d1 ... dk GS ( L pL pH m fn
-        image: function (image, align, left, width, right) {
-            let r = this.upsideDown ? this.area(right, width, left) + this.align(2 - align) : this.area(left, width, right) + this.align(align);
+        image: function (image) {
+            const align = arguments[1] || this.alignment;
+            const left = arguments[2] || this.left;
+            const width = arguments[3] || this.width;
+            const right = arguments[4] || this.right;
+            let r = this.upsideDown ? this.area(right, width, left) + this.align(2 - align) : '';
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
             const d = Array(w).fill(0);
@@ -1931,7 +1972,7 @@ limitations under the License.
         // print QR Code: GS ( k pL pH cn fn n1 n2 GS ( k pL pH cn fn n GS ( k pL pH cn fn n GS ( k pL pH cn fn m d1 ... dk GS ( k pL pH cn fn m
         qrcode: function (symbol, encoding) {
             if (typeof qrcode !== 'undefined') {
-                let r = '';
+                let r = this.upsideDown ? this.area(this.right, this.width, this.left) + this.align(2 - this.alignment) : '';
                 if (symbol.data.length > 0) {
                     const qr = qrcode(0, symbol.level.toUpperCase());
                     qr.addData(symbol.data);
@@ -1943,9 +1984,6 @@ limitations under the License.
                     img = img.split('\n');
                     const w = img.length * symbol.cell;
                     const h = w;
-                    if (this.upsideDown) {
-                        r += this.area(this.right, this.width, this.left) + this.align(2 - this.alignment);
-                    }
                     const l = (w + 7 >> 3) * h + 10;
                     r += '\x1d8L' + $(l & 255, l >> 8 & 255, l >> 16 & 255, l >> 24 & 255, 48, 112, 48, 1, 1, 49, w & 255, w >> 8 & 255, h & 255, h >> 8 & 255);
                     for (let i = 0; i < img.length; i++) {
@@ -2154,7 +2192,7 @@ limitations under the License.
         // print QR Code: DC2 ; n GS p 1 model e v mode nl nh dk
         qrcode: function (symbol, encoding) {
             if (typeof qrcode !== 'undefined') {
-                let r = '';
+                let r = this.upsideDown ? this.area(this.right, this.width, this.left) + this.align(2 - this.alignment) : '';
                 if (symbol.data.length > 0) {
                     const qr = qrcode(0, symbol.level.toUpperCase());
                     qr.addData(symbol.data);
@@ -2166,9 +2204,6 @@ limitations under the License.
                     img = img.split('\n');
                     const w = img.length * symbol.cell;
                     const h = w;
-                    if (this.upsideDown) {
-                        r += this.area(this.right, this.width, this.left) + this.align(2 - this.alignment);
-                    }
                     const l = (w + 7 >> 3) * h + 10;
                     r += '\x1d8L' + $(l & 255, l >> 8 & 255, l >> 16 & 255, l >> 24 & 255, 48, 112, 48, 1, 1, 49, w & 255, w >> 8 & 255, h & 255, h >> 8 & 255);
                     for (let i = 0; i < img.length; i++) {
@@ -2384,7 +2419,11 @@ limitations under the License.
         // image split size
         split: 1662,
         // print image: GS 8 L p1 p2 p3 p4 m fn a bx by c xL xH yL yH d1 ... dk GS ( L pL pH m fn
-        image: function (image, align, left, width, right) {
+        image: function (image) {
+            const align = arguments[1] || this.alignment;
+            const left = arguments[2] || this.left;
+            const width = arguments[3] || this.width;
+            const right = arguments[4] || this.right;
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
             const d = Array(w).fill(0);
@@ -2425,12 +2464,12 @@ limitations under the License.
             if (this.upsideDown) {
                 s.reverse();
             }
-            return ((this.upsideDown && align === 2 ? this.area(right, width, left) : this.area(left, width, right)) + this.align(align)) + s.join('');
+            return (this.upsideDown && align === 2 ? this.area(right, width, left) : '') + s.join('');
         },
         // print QR Code: GS ( k pL pH cn fn n1 n2 GS ( k pL pH cn fn n GS ( k pL pH cn fn n GS ( k pL pH cn fn m d1 ... dk GS ( k pL pH cn fn m
         qrcode: function (symbol, encoding) {
             if (typeof qrcode !== 'undefined') {
-                let r = '';
+                let r = this.upsideDown && this.alignment === 2 ? this.area(this.right, this.width, this.left) : '';
                 if (symbol.data.length > 0) {
                     const qr = qrcode(0, symbol.level.toUpperCase());
                     qr.addData(symbol.data);
@@ -2438,9 +2477,6 @@ limitations under the License.
                     const img = qr.createASCII(2, 0).split('\n');
                     const w = img.length * symbol.cell;
                     const h = w;
-                    if (this.upsideDown && this.alignment === 2) {
-                        r += this.area(this.right, this.width, this.left);
-                    }
                     const l = (w + 7 >> 3) * h + 10;
                     r += '\x1d8L' + $(l & 255, l >> 8 & 255, l >> 16 & 255, l >> 24 & 255, 48, 112, 48, 1, 1, 49, w & 255, w >> 8 & 255, h & 255, h >> 8 & 255);
                     for (let i = 0; i < img.length; i++) {
@@ -2622,8 +2658,8 @@ limitations under the License.
         // insert commands:
         command: command => command,
         // print image: ESC * 0 wL wH d1 ... dk ESC J n
-        image: function (image, align, left, width, right) {
-            let r = this.align(align);
+        image: function (image) {
+            let r = '';
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
             if (w < 1024) {
@@ -2766,7 +2802,7 @@ limitations under the License.
         // image split size
         split: 2400,
         // print image: ESC GS S m xL xH yL yH n [d11 d12 ... d1k]
-        image: function (image, align, left, width, right) {
+        image: function (image) {
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
             const d = Array(w).fill(0);
@@ -2806,7 +2842,7 @@ limitations under the License.
             if (this.upsideDown) {
                 s.reverse();
             }
-            return this.area(left, width, right) + this.align(align) + s.join('');
+            return s.join('');
         },
         // print QR Code: ESC GS y S 0 n ESC GS y S 1 n ESC GS y S 2 n ESC GS y D 1 m nL nH d1 d2 ... dk ESC GS y P
         qrcode: function (symbol, encoding) {
@@ -2906,7 +2942,7 @@ limitations under the License.
             return (this.cutting ? this.cut() : '') + '\x1b\x1d\x03\x01\x00\x00\x04';
         },
         // print image: ESC k n1 n2 d1 ... dk
-        image: function (image, align, left, width, right) {
+        image: function (image) {
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
             const h = img.height;
@@ -2951,7 +2987,7 @@ limitations under the License.
             if (this.upsideDown) {
                 s.reverse();
             }
-            return '\x1b0' + this.area(left, width, right) + this.align(align) + s.join('') + (this.spacing ? '\x1bz1' : '\x1b0');
+            return '\x1b0' + s.join('') + (this.spacing ? '\x1bz1' : '\x1b0');
         },
         // print QR Code: ESC GS y S 0 n ESC GS y S 1 n ESC GS y S 2 n ESC GS y D 1 m nL nH d1 d2 ... dk ESC GS y P
         qrcode: function (symbol, encoding) {
@@ -2964,7 +3000,6 @@ limitations under the License.
                     const img = qr.createASCII(2, 0).split('\n');
                     const w = img.length * symbol.cell;
                     const l = w + 7 >> 3;
-                    r += '\x1b0';
                     const s = [];
                     for (let i = 0; i < img.length; i++) {
                         let d = '';
@@ -2989,6 +3024,7 @@ limitations under the License.
                     if (this.upsideDown) {
                         s.reverse();
                     }
+                    r += '\x1b0';
                     for (let k = 0; k < s.length; k += 24) {
                         const a = s.slice(k, k + 24);
                         if (this.upsideDown) {
@@ -3118,6 +3154,10 @@ limitations under the License.
         gradient: true,
         gamma: 1.8,
         threshold: 128,
+        alignment: 0,
+        left: 0,
+        width: 48,
+        right: 0,
         // start printing: ESC RS a n ESC * r A ESC * r P n NUL (ESC * r E n NUL)
         open: function (printer) {
             this.upsideDown = printer.upsideDown;
@@ -3126,11 +3166,27 @@ limitations under the License.
             this.gradient = printer.gradient;
             this.gamma = printer.gamma;
             this.threshold = printer.threshold;
+            this.alignment = 0;
+            this.left = 0;
+            this.width = printer.cpl;
+            this.right = 0;
             return '\x1b\x1ea\x00\x1b*rA\x1b*rP0\x00' + (this.cutting ? '' : '\x1b*rE1\x00');
         },
         // finish printing: ESC * r B ESC ACK SOH
         close: function () {
             return '\x1b*rB\x1b\x06\x01';
+        },
+        // set print area:
+        area: function (left, width, right) {
+            this.left = left;
+            this.width = width;
+            this.right = right;
+            return '';
+        },
+        // set line alignment:
+        align: function (align) {
+            this.alignment = align;
+            return '';
         },
         // cut paper: ESC FF NUL
         cut: () => '\x1b\x0c\x00',
@@ -3141,7 +3197,11 @@ limitations under the License.
         // insert commands:
         command: command => command,
         // print image: b n1 n2 data
-        image: function (image, align, left, width, right) {
+        image: function (image) {
+            const align = arguments[1] || this.alignment;
+            const left = arguments[2] || this.left;
+            const width = arguments[3] || this.width;
+            const right = arguments[4] || this.right;
             let r = '';
             const img = PNG.sync.read(Buffer.from(image, 'base64'));
             const w = img.width;
@@ -3206,11 +3266,11 @@ limitations under the License.
 
     // web browser
     if (typeof window !== 'undefined') {
-        window.receiptline = { transform: transform, createTransform: createTransform, commands: commands };
+        window.receiptline = { transform: transform, createTransform: createTransform, commands: commands, barcode: barcode };
     }
     // Node.js
     if (typeof module !== 'undefined') {
-        module.exports = { transform: transform, createTransform: createTransform, commands: commands };
+        module.exports = { transform: transform, createTransform: createTransform, commands: commands, barcode: barcode };
     }
 
 })();
