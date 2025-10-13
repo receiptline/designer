@@ -1300,7 +1300,7 @@ limitations under the License.
             let p = this.textPosition;
             const tspan = this.arrayFrom(text, encoding).reduce((a, c) => {
                 const q = this.measureText(c, encoding) * this.textScale;
-                const r = (p + q / 2) * this.charWidth / this.textScale;
+                const r = Math.floor((p + q / 2) * this.charWidth / this.textScale);
                 p += q;
                 return a + `<tspan x="${r}">${c.replace(/[ &<>]/g, r => ({' ': '&#xa0;', '&': '&amp;', '<': '&lt;', '>': '&gt;'}[r]))}</tspan>`;
             }, '');
@@ -1334,7 +1334,7 @@ limitations under the License.
                 return '';
             });
             const imgData = `<image xlink:href="data:image/png;base64,${image}" x="0" y="0" width="${imgWidth}" height="${imgHeight}"/>`;
-            const margin = this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - imgWidth) * this.lineAlign / 2;
+            const margin = Math.floor(this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - imgWidth) * this.lineAlign / 2);
             this.svgContent += `<g transform="translate(${margin},${this.svgHeight})">${imgData}</g>`;
             this.svgHeight += imgHeight;
             return '';
@@ -1346,7 +1346,7 @@ limitations under the License.
                 qr.addData(symbol.data);
                 qr.make();
                 qr.createSvgTag(symbol.cell, 0).replace(/width="(\d+)px".*height="(\d+)px".*(<path.*?>)/, (match, w, h, path) => {
-                    const margin = this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - Number(w)) * this.lineAlign / 2;
+                    const margin = Math.floor(this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - Number(w)) * this.lineAlign / 2);
                     this.svgContent += `<g transform="translate(${margin},${this.svgHeight})">${path}</g>`;
                     this.svgHeight += Number(h);
                 });
@@ -1371,11 +1371,11 @@ limitations under the License.
                 path += '" fill="#000"/>';
                 // draw human readable interpretation
                 if (bar.hri) {
-                    const m = (width - (bar.text.length - 1) * this.charWidth) / 2;
+                    const m = Math.floor((width - (bar.text.length - 1) * this.charWidth) / 2);
                     const tspan = bar.text.split('').reduce((a, c, i) => a + `<tspan x="${m + this.charWidth * i}">${c.replace(/[ &<>]/g, r => ({' ': '&#xa0;', '&': '&amp;', '<': '&lt;', '>': '&gt;'}[r]))}</tspan>`, '');
                     path += `<text y="${height}">${tspan}</text>`;
                 }
-                const margin = this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - width) * this.lineAlign / 2;
+                const margin = Math.floor(this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - width) * this.lineAlign / 2);
                 this.svgContent += `<g transform="translate(${margin},${this.svgHeight})">${path}</g>`;
                 this.svgHeight += height;
             }
@@ -1598,7 +1598,7 @@ limitations under the License.
                 r.hri = symbol.hri;
                 r.text = s;
                 // generate bars and spaces
-                const d = symbol.data.replace(/((?!^(\d{2})+$).)*/, '', '').split('').map(c => Number(c));
+                const d = s.split('').map(c => Number(c));
                 const q = symbol.quietZone ? 'a' : '0';
                 let m = q + this.i25.start;
                 let i = 0;
@@ -3409,14 +3409,12 @@ limitations under the License.
     //
     const _text = {
         left: 0,
-        width: 48,
         position: 0,
         scale: 1,
         buffer: [],
         // start printing:
         open: function (printer) {
             this.left = 0;
-            this.width = printer.cpl;
             this.position = 0;
             this.scale = 1;
             this.buffer = [];
@@ -3425,7 +3423,6 @@ limitations under the License.
         // set print area:
         area: function (left, width, right) {
             this.left = left;
-            this.width = width;
             return '';
         },
         // set absolute print position:
