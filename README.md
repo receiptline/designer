@@ -1,3 +1,5 @@
 # receiptline.github.io
 
-https://receiptline.github.io/designer/  
+Please use Receipt.js Designer instead.  
+
+https://receiptline.github.io/receiptjs-designer/  

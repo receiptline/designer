@@ -1573,7 +1573,7 @@ limitations under the License.
                 case 'shiftjis':
                     r = t.reduce((a, c) => {
                         const d = c.codePointAt(0);
-                        return a + (d < 0x80 || d === 0xa5 || d === 0x203e || (d > 0xff60 && d < 0xffa0) ? 1 : 2);
+                        return a + (d < 0x80 || d === 0xa0 || d === 0xa5 || d === 0x203e || (d > 0xff60 && d < 0xffa0) ? 1 : 2);
                     }, 0);
                     break;
                 case 'cp936':
@@ -1582,7 +1582,10 @@ limitations under the License.
                 case 'ksc5601':
                 case 'cp950':
                 case 'big5':
-                    r = t.reduce((a, c) => a + (c.codePointAt(0) < 0x80 ? 1 : 2), 0);
+                    r = t.reduce((a, c) => {
+                        const d = c.codePointAt(0);
+                        return a + (d < 0x80 || d === 0xa0 ? 1 : 2);
+                    }, 0);
                     break;
                 case 'tis620':
                     const a = t.reduce((a, c) => {
@@ -1654,64 +1657,67 @@ limitations under the License.
          */
         arrayFrom: (text, encoding) => {
             const t = Array.from(text);
-            if (encoding === 'tis620') {
-                const a = t.reduce((a, c) => {
-                    const d = c.codePointAt(0);
-                    if (a.consonant) {
-                        if (d === 0xe31 || d >= 0xe34 && d <= 0xe3a || d === 0xe47) {
-                            if (a.vowel) {
-                                a.result.push(a.consonant + a.vowel + a.tone, c);
-                                a.consonant = a.vowel = a.tone = '';
+            switch (encoding) {
+                case 'cp932':
+                case 'shiftjis':
+                    return t.map(c => c.replace(/\\/g, '\xa5').replace(/\u203e/g, '~').replace(/\u301c/g, '\uff5e'));
+                case 'tis620':
+                    const a = t.reduce((a, c) => {
+                        const d = c.codePointAt(0);
+                        if (a.consonant) {
+                            if (d === 0xe31 || d >= 0xe34 && d <= 0xe3a || d === 0xe47) {
+                                if (a.vowel) {
+                                    a.result.push(a.consonant + a.vowel + a.tone, c);
+                                    a.consonant = a.vowel = a.tone = '';
+                                }
+                                else {
+                                    a.vowel = c;
+                                }
+                            }
+                            else if (d >= 0xe48 && d <= 0xe4b) {
+                                if (a.tone) {
+                                    a.result.push(a.consonant + a.vowel + a.tone, c);
+                                    a.consonant = a.vowel = a.tone = '';
+                                }
+                                else {
+                                    a.tone = c;
+                                }
+                            }
+                            else if (d === 0xe33 || d >= 0xe4c && d <= 0xe4e) {
+                                if (a.vowel || a.tone) {
+                                    a.result.push(a.consonant + a.vowel + a.tone, c);
+                                    a.consonant = a.vowel = a.tone = '';
+                                }
+                                else {
+                                    a.result.push(a.consonant + c);
+                                    a.consonant = '';
+                                }
+                            }
+                            else if (d >= 0xe01 && d <= 0xe2e) {
+                                a.result.push(a.consonant + a.vowel + a.tone);
+                                a.consonant = c;
+                                a.vowel = a.tone = '';
                             }
                             else {
-                                a.vowel = c;
-                            }
-                        }
-                        else if (d >= 0xe48 && d <= 0xe4b) {
-                            if (a.tone) {
                                 a.result.push(a.consonant + a.vowel + a.tone, c);
                                 a.consonant = a.vowel = a.tone = '';
-                            }
-                            else {
-                                a.tone = c;
-                            }
-                        }
-                        else if (d === 0xe33 || d >= 0xe4c && d <= 0xe4e) {
-                            if (a.vowel || a.tone) {
-                                a.result.push(a.consonant + a.vowel + a.tone, c);
-                                a.consonant = a.vowel = a.tone = '';
-                            }
-                            else {
-                                a.result.push(a.consonant + c);
-                                a.consonant = '';
                             }
                         }
                         else if (d >= 0xe01 && d <= 0xe2e) {
-                            a.result.push(a.consonant + a.vowel + a.tone);
                             a.consonant = c;
-                            a.vowel = a.tone = '';
                         }
                         else {
-                            a.result.push(a.consonant + a.vowel + a.tone, c);
-                            a.consonant = a.vowel = a.tone = '';
+                            a.result.push(c);
                         }
+                        return a;
+                    }, { result: [], consonant: '', vowel: '', tone: '' });
+                    if (a.consonant) {
+                        a.result.push(a.consonant + a.vowel + a.tone);
+                        a.consonant = a.vowel = a.tone = '';
                     }
-                    else if (d >= 0xe01 && d <= 0xe2e) {
-                        a.consonant = c;
-                    }
-                    else {
-                        a.result.push(c);
-                    }
-                    return a;
-                }, { result: [], consonant: '', vowel: '', tone: '' });
-                if (a.consonant) {
-                    a.result.push(a.consonant + a.vowel + a.tone);
-                    a.consonant = a.vowel = a.tone = '';
-                }
-                return a.result;
-            }
-            else {
-                return t;
+                    return a.result;
+                default:
+                    return t;
             }
         },
 
@@ -1890,6 +1896,7 @@ limitations under the License.
     // SVG
     //
     const _svg = {
+        receiptId: '',
         svgWidth: 576,
         svgHeight: 0,
         svgContent: '',
@@ -1907,6 +1914,9 @@ limitations under the License.
         spacing: false,
         // start printing:
         open: function (printer) {
+            const url = URL.createObjectURL(new Blob());
+            URL.revokeObjectURL(url);
+            this.receiptId = url.slice(-36);
             this.svgWidth = printer.cpl * this.charWidth;
             this.svgHeight = 0;
             this.svgContent = '';
@@ -1929,8 +1939,8 @@ limitations under the License.
             switch (this.textEncoding) {
                 case 'cp932':
                 case 'shiftjis':
-                    p.font = `'Kosugi Maru', 'MS Gothic', 'San Francisco', 'Osaka-Mono', monospace`;
-                    p.style = '@import url("https://fonts.googleapis.com/css2?family=Kosugi+Maru&display=swap");';
+                    p.font = `'BIZ UDGothic', 'MS Gothic', 'San Francisco', 'Osaka-Mono', monospace`;
+                    p.style = '@import url("https://fonts.googleapis.com/css2?family=BIZ+UDGothic&display=swap");';
                     p.lang = 'ja';
                     break;
                 case 'cp936':
@@ -1968,7 +1978,7 @@ limitations under the License.
             }
             return `<svg width="${this.svgWidth}px" height="${this.svgHeight}px" viewBox="0 0 ${this.svgWidth} ${this.svgHeight}" preserveAspectRatio="xMinYMin meet" ` +
                 `xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1">${p.style}` +
-                `<defs><filter id="receiptlineinvert" x="0" y="0" width="100%" height="100%"><feFlood flood-color="#000"/><feComposite in="SourceGraphic" operator="xor"/></filter></defs>` +
+                `<defs><filter id="receipt-${this.receiptId}" x="0" y="0" width="100%" height="100%"><feFlood flood-color="#000"/><feComposite in2="SourceGraphic" operator="out"/></filter></defs>` +
                 `<g font-family="${p.font}" fill="#000" font-size="${p.size}" dominant-baseline="text-after-edge" text-anchor="middle"${p.lang}>${this.svgContent}</g></svg>\n`;
         },
         // set print area:
@@ -2052,7 +2062,7 @@ limitations under the License.
         },
         // invert text:
         iv: function () {
-            this.textAttributes.filter = 'url(#receiptlineinvert)';
+            this.textAttributes.filter = `url(#receipt-${this.receiptId})`;
             return '';
         },
         // scale up text:
@@ -2154,8 +2164,8 @@ limitations under the License.
                 path += '" fill="#000"/>';
                 // draw human readable interpretation
                 if (bar.hri) {
-                    const m = Math.floor((width - (bar.text.length - 1) * this.charWidth) / 2);
-                    const tspan = bar.text.split('').reduce((a, c, i) => a + `<tspan x="${m + this.charWidth * i}">${c.replace(/[ &<>]/g, r => ({' ': '&#xa0;', '&': '&amp;', '<': '&lt;', '>': '&gt;'}[r]))}</tspan>`, '');
+                    const m = Math.floor((width - (this.measureText(bar.text, encoding) - 1) * this.charWidth) / 2);
+                    const tspan = this.arrayFrom(bar.text, encoding).reduce((a, c, i) => a + `<tspan x="${m + this.charWidth * i}">${c.replace(/[ &<>]/g, r => ({' ': '&#xa0;', '&': '&amp;', '<': '&lt;', '>': '&gt;'}[r]))}</tspan>`, '');
                     path += `<text y="${height}">${tspan}</text>`;
                 }
                 const margin = Math.floor(this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - width) * this.lineAlign / 2);
