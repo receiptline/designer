@@ -1111,30 +1111,31 @@ limitations under the License.
              * @returns {object} barcode form
              */
             generate(symbol) {
+                const s = { data: '', type: 'code128', width: 2, height: 72, hri: false, cell: 3, level: 'l', quietZone: false, ...symbol };
                 let r = {};
-                switch (symbol.type) {
+                switch (s.type) {
                     case 'upc':
-                        r = symbol.data.length < 9 ? upce(symbol) : upca(symbol);
+                        r = s.data.length < 9 ? upce(s) : upca(s);
                         break;
                     case 'ean':
                     case 'jan':
-                        r = symbol.data.length < 9 ? ean8(symbol) : ean13(symbol);
+                        r = s.data.length < 9 ? ean8(s) : ean13(s);
                         break;
                     case 'code39':
-                        r = code39(symbol);
+                        r = code39(s);
                         break;
                     case 'itf':
-                        r = itf(symbol);
+                        r = itf(s);
                         break;
                     case 'codabar':
                     case 'nw7':
-                        r = codabar(symbol);
+                        r = codabar(s);
                         break;
                     case 'code93':
-                        r = code93(symbol);
+                        r = code93(s);
                         break;
                     case 'code128':
-                        r = code128(symbol);
+                        r = code128(s);
                         break;
                     default:
                         break;
@@ -1376,7 +1377,7 @@ limitations under the License.
             for (let i = 0; i < 15; i++) {
                 matrix[r][8] = matrix[8][c] = d >> i & 1;
                 r += i === 5 ? 2 : i === 7 ? size - 15 : 1;
-                c -= i === 7 ? size - 15 : i === 8 ? 2 : 1;
+                c -= i === 8 ? 2 : i === 7 ? size - 15 : 1;
             }
             matrix[size - 8][8] = 1;
         };
@@ -1530,13 +1531,17 @@ limitations under the License.
              * @returns {Uint8Array[]} QR Code form
              */
             generate: symbol => {
-                const level = symbol.level;
-                const utf8 = new TextEncoder().encode(symbol.data).slice(0, getCapacity(level, 40));
+                const s = { data: '', type: 'code128', width: 2, height: 72, hri: false, cell: 3, level: 'l', quietZone: false, ...symbol };
+                const level = s.level;
+                const utf8 = new TextEncoder().encode(s.data);
+                if (utf8.length === 0 || utf8.length > getCapacity(level, 40)) {
+                    return [];
+                }
                 const version = selectVersion(utf8, level);
                 const data = createData(utf8, level, version);
                 const mask = selectMask(data, level, version);
                 const matrix = createMatrix(data, level, version, mask);
-                if (symbol.quietZone) {
+                if (s.quietZone) {
                     const size = matrix.length + 8;
                     const m = Array.from({ length: size }, () => new Uint8Array(size));
                     matrix.forEach((r, i) => m[i + 4].set(r, 4));
@@ -1974,10 +1979,9 @@ limitations under the License.
                 p.style = `<style type="text/css"><![CDATA[${p.style}]]></style>`;
             }
             if (p.lang.length > 0) {
-                p.lang = ` xml:lang="${p.lang}"`;
+                p.lang = ` lang="${p.lang}"`;
             }
-            return `<svg width="${this.svgWidth}px" height="${this.svgHeight}px" viewBox="0 0 ${this.svgWidth} ${this.svgHeight}" preserveAspectRatio="xMinYMin meet" ` +
-                `xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1">${p.style}` +
+            return `<svg width="${this.svgWidth}px" height="${this.svgHeight}px" viewBox="0 0 ${this.svgWidth} ${this.svgHeight}" preserveAspectRatio="xMinYMin meet" xmlns="http://www.w3.org/2000/svg">${p.style}` +
                 `<defs><filter id="receipt-${this.receiptId}" x="0" y="0" width="100%" height="100%"><feFlood flood-color="#000"/><feComposite in2="SourceGraphic" operator="out"/></filter></defs>` +
                 `<g font-family="${p.font}" fill="#000" font-size="${p.size}" dominant-baseline="text-after-edge" text-anchor="middle"${p.lang}>${this.svgContent}</g></svg>\n`;
         },
@@ -2118,7 +2122,7 @@ limitations under the License.
                 imgHeight = h.charCodeAt(0) << 24 | h.charCodeAt(1) << 16 | h.charCodeAt(2) << 8 | h.charCodeAt(3);
                 return '';
             });
-            const imgData = `<image xlink:href="data:image/png;base64,${image}" x="0" y="0" width="${imgWidth}" height="${imgHeight}"/>`;
+            const imgData = `<image href="data:image/png;base64,${image}" x="0" y="0" width="${imgWidth}" height="${imgHeight}"/>`;
             const margin = Math.floor(this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - imgWidth) * this.lineAlign / 2);
             this.svgContent += `<g transform="translate(${margin},${this.svgHeight})">${imgData}</g>`;
             this.svgHeight += imgHeight;
@@ -2135,11 +2139,11 @@ limitations under the License.
                 for (let y = 0; y < h; y++) {
                     for (let x = 0; x < w; x++) {
                         if (matrix[y][x] == 1) {
-                            path += `M${x * c},${y * c}l${c},0 0,${c} -${c},0 0,-${c}z `;
+                            path += `M${x * c},${y * c}l${c},0 0,${c} -${c},0 0,-${c}z`;
                         }
                     }
                 }
-                path += '" stroke="transparent" fill="black"/>';
+                path += '" stroke="transparent" fill="#000"/>';
                 const margin = Math.floor(this.lineMargin * this.charWidth + (this.lineWidth * this.charWidth - w * c) * this.lineAlign / 2);
                 this.svgContent += `<g transform="translate(${margin},${this.svgHeight})">${path}</g>`;
                 this.svgHeight += h * c;
